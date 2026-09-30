@@ -66,6 +66,11 @@ export const API = {
   /** F5: API keys de terceros */
   keys: "/api/v1/keys",
   key: (id: string) => `/api/v1/keys/${id}`,
+  /** F6: eventos (movimiento) y webhooks */
+  events: "/api/v1/events",
+  event: (id: string) => `/api/v1/events/${id}`,
+  webhooks: "/api/v1/webhooks",
+  webhook: (id: string) => `/api/v1/webhooks/${id}`,
   /** F5: documentación pública */
   docs: "/api/docs",
   openapi: "/api/openapi.json",

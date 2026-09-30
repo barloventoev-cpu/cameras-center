@@ -31,33 +31,29 @@ export function buildFfmpegArgs(spec: SourceSpec): string[] {
   return [...input, ...OUTPUT_ARGS];
 }
 
-function buildInputArgs(spec: SourceSpec): string[] {
+/**
+ * Argumentos de entrada reutilizados por la detección de movimiento (F6):
+ * ahí hace falta `loglevel info` para que FFmpeg imprima `lavfi.scene_score`.
+ */
+export function buildInputArgs(spec: SourceSpec, options: { loglevel?: string } = {}): string[] {
+  const loglevel = options.loglevel ?? "warning";
   switch (spec.sourceType) {
     case "rtsp":
       // TCP evita el packet loss típico del UDP en wifi
-      return ["-hide_banner", "-loglevel", "warning", "-rtsp_transport", "tcp", "-i", spec.connection];
+      return ["-hide_banner", "-loglevel", loglevel, "-rtsp_transport", "tcp", "-i", spec.connection];
 
     case "mjpeg":
       // Cámara que expone un MJPEG por HTTP; se recodifica para normalizar fps/tamaño
-      return ["-hide_banner", "-loglevel", "warning", "-i", spec.connection];
+      return ["-hide_banner", "-loglevel", loglevel, "-i", spec.connection];
 
     case "test":
       // Fuente sintética: patrón de prueba con contador. Sólo para desarrollo.
       // `-re` (input) limita la generación a tiempo real para no quemar CPU.
-      return [
-        "-hide_banner",
-        "-loglevel",
-        "warning",
-        "-re",
-        "-f",
-        "lavfi",
-        "-i",
-        "testsrc=size=1280x720:rate=6",
-      ];
+      return ["-hide_banner", "-loglevel", loglevel, "-re", "-f", "lavfi", "-i", "testsrc=size=1280x720:rate=6"];
 
     case "onvif":
     default:
       // ONVIF resuelve a una URL RTSP; si llega aquí, `connection` ya es esa URL
-      return ["-hide_banner", "-loglevel", "warning", "-rtsp_transport", "tcp", "-i", spec.connection];
+      return ["-hide_banner", "-loglevel", loglevel, "-rtsp_transport", "tcp", "-i", spec.connection];
   }
 }

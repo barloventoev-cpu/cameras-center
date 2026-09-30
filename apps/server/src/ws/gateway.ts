@@ -2,6 +2,7 @@ import type { Server as HttpServer } from "node:http";
 import { Server, type Socket } from "socket.io";
 import {
   CHANNELS,
+  safeParseAgentEvent,
   safeParseFrameHeader,
   safeParseViewerMessage,
   type StreamProfile,
@@ -12,6 +13,7 @@ import { verifyApiKey } from "../keys";
 import { keyLimiter } from "../middleware/rateLimit";
 import { config } from "../config";
 import { captureThumb } from "../thumbs";
+import { recordAgentEvent, toSummary } from "../events";
 import { frameCache } from "./frames";
 
 export interface StreamRequest {
@@ -177,6 +179,22 @@ export function createGateway(httpServer: HttpServer): Gateway {
       if (payload?.report?.cameraId) {
         io.to(cameraRoom(payload.report.cameraId)).emit(CHANNELS.agentStatus, payload);
       }
+    });
+
+    // --- F6: el agent avisa de un evento (movimiento) ------------------------
+    socket.on(CHANNELS.agentEvent, (raw: unknown) => {
+      if (socket.data.role !== "agent") return;
+      const parsed = safeParseAgentEvent(raw);
+      if (!parsed.success) {
+        console.warn(`[gateway] agent:event inválido: ${parsed.error.issues[0]?.message ?? ""}`);
+        return;
+      }
+      // subir a Cloudinary + guardar + webhooks: sin bloquear el socket
+      void recordAgentEvent(parsed.data)
+        .then((stored) => {
+          if (stored) io.emit(CHANNELS.eventNew, { type: "event:new", event: toSummary(stored) });
+        })
+        .catch((error) => console.warn(`[gateway] error registrando evento: ${error instanceof Error ? error.message : error}`));
     });
 
     // --- Plano de medios: agent -> server -> viewers ------------------------

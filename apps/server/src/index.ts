@@ -9,7 +9,10 @@ import { camerasRouter, streamsRouter } from "./routes/cameras";
 import { agentRouter } from "./routes/agent";
 import { authRouter } from "./routes/auth";
 import { keysRouter } from "./routes/keys";
+import { eventsRouter } from "./routes/events";
+import { webhooksRouter } from "./routes/webhooks";
 import { docsRouter } from "./routes/docs";
+import { seedWebhooksFromEnv } from "./webhooks";
 import { verifySchema } from "./db/supabase";
 import { createGateway } from "./ws/gateway";
 import { globalRateLimit } from "./middleware/rateLimit";
@@ -30,6 +33,8 @@ app.use("/api/auth", authRouter);
 app.use(API.cameras, camerasRouter);
 app.use("/api/v1/streams", streamsRouter); // F5: MJPEG para terceros
 app.use(API.keys, keysRouter);
+app.use(API.events, eventsRouter); // F6: historial de eventos
+app.use(API.webhooks, webhooksRouter); // F6: avisos a otras apps
 app.use(docsRouter); // /api/docs y /api/openapi.json
 
 // 404 JSON (evita que un 404 en HTML rompa a los clientes de API)
@@ -76,6 +81,9 @@ async function bootstrap() {
   } catch (error) {
     console.warn("[server] seed omitido:", error instanceof Error ? error.message : error);
   }
+
+  // F6: webhooks declarados en .env (WEBHOOK_URL / WEBHOOK_SECRET)
+  seedWebhooksFromEnv();
 
   httpServer.listen(config.port, () => {
     console.log(`\n  🖥  server   http://localhost:${config.port}`);

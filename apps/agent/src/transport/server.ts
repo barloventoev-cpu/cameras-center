@@ -2,6 +2,7 @@ import { io, type Socket } from "socket.io-client";
 import {
   CHANNELS,
   parseServerToAgentMessage,
+  type AgentEvent,
   type AgentHello,
   type ServerToAgentMessage,
 } from "@cameras/protocol";
@@ -10,6 +11,8 @@ import { config } from "../config";
 export interface ServerTransport {
   socket: Socket;
   emitStatus: (report: unknown) => void;
+  /** F6: envía un evento (movimiento) al server. Devuelve false si no hay conexión. */
+  emitEvent: (event: AgentEvent) => boolean;
 }
 
 export interface ServerTransportHandlers {
@@ -77,5 +80,10 @@ export function connectToServer(
   return {
     socket,
     emitStatus: (report) => socket.emit(CHANNELS.agentStatus, { type: "agent:status", report }),
+    emitEvent: (event) => {
+      if (!socket.connected) return false;
+      socket.emit(CHANNELS.agentEvent, event);
+      return true;
+    },
   };
 }

@@ -60,6 +60,7 @@ function openapi(base: string) {
       { name: "Cámaras", description: "Alta, consulta y borrado de cámaras" },
       { name: "Imágenes", description: "Fotos puntuales y stream MJPEG" },
       { name: "API keys", description: "Credenciales para terceros" },
+      { name: "Eventos", description: "Detección de movimiento y webhooks" },
     ],
     components: {
       securitySchemes: { bearerAuth, apiKeyAuth: apiKeyHeader },
@@ -91,6 +92,35 @@ function openapi(base: string) {
             revoked: { type: "boolean" },
             createdAt: { type: "string", format: "date-time" },
             lastUsedAt: { type: "string", format: "date-time", nullable: true },
+          },
+        },
+        Event: {
+          type: "object",
+          description: "Aviso de movimiento detectado por el agent (F6)",
+          properties: {
+            id: { type: "string", format: "uuid" },
+            cameraId: { type: "string", format: "uuid" },
+            cameraName: { type: "string", nullable: true },
+            type: { type: "string", enum: ["motion"] },
+            score: { type: "number", nullable: true, description: "Puntuación de escena FFmpeg (0..1)" },
+            at: { type: "integer", description: "Época (ms) de la detección" },
+            createdAt: { type: "string", format: "date-time" },
+            snapshot: { type: "string", format: "uri", nullable: true, description: "Imagen del momento en Cloudinary" },
+          },
+        },
+        Webhook: {
+          type: "object",
+          properties: {
+            id: { type: "string", format: "uuid" },
+            url: { type: "string", format: "uri" },
+            events: { type: "array", items: { type: "string" } },
+            active: { type: "boolean" },
+            createdAt: { type: "string", format: "date-time" },
+            deliveries: { type: "integer" },
+            failures: { type: "integer" },
+            lastStatus: { type: "integer", nullable: true },
+            lastAt: { type: "string", format: "date-time", nullable: true },
+            lastError: { type: "string", nullable: true },
           },
         },
       },
@@ -289,6 +319,69 @@ function openapi(base: string) {
           responses: { "204": { description: "Revocada" }, "404": errorResponse, "403": errorResponse },
         },
       },
+      [API.events]: {
+        get: {
+          tags: ["Eventos"],
+          summary: "Historial de eventos (movimiento)",
+          description: "Por defecto sólo `type=motion`: las miniaturas de F4 comparten tabla pero no interesan a un tercero.",
+          parameters: [
+            { name: "type", in: "query", schema: { type: "string", default: "motion" } },
+            { name: "cameraId", in: "query", schema: { type: "string" } },
+            { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 100, default: 20 } },
+          ],
+          responses: {
+            "200": { description: "Lista", content: json({ type: "object" }) },
+            "401": errorResponse,
+            "429": errorResponse,
+          },
+        },
+      },
+      [API.event("{id}")]: {
+        delete: {
+          tags: ["Eventos"],
+          summary: "Borrar un evento (sólo JWT de owner)",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: { "204": { description: "Borrado" }, "404": errorResponse, "403": errorResponse },
+        },
+      },
+      [API.webhooks]: {
+        get: {
+          tags: ["Eventos"],
+          summary: "Listar webhooks (sólo JWT, nunca devuelve el secreto)",
+          responses: { "200": { description: "Lista + estadísticas", content: json({ type: "object" }) }, "401": errorResponse },
+        },
+        post: {
+          tags: ["Eventos"],
+          summary: "Crear webhook (sólo JWT de owner)",
+          description:
+            "El `secret` se devuelve **una sola vez**. Cada envío firma `x-cameras-signature: sha256=<HMAC-SHA256(secret, `${x-cameras-timestamp}.${body}`)>`.",
+          requestBody: {
+            required: true,
+            content: json({
+              type: "object",
+              required: ["url"],
+              properties: {
+                url: { type: "string", format: "uri", description: "http(s)://… que recibirá el POST" },
+                secret: { type: "string", minLength: 8, description: "Si se omite se genera uno" },
+                events: { type: "array", items: { type: "string", enum: ["motion"] }, default: ["motion"] },
+              },
+            }),
+          },
+          responses: {
+            "201": { description: "Creado (incluye `secret`)", content: json({ type: "object" }) },
+            "400": errorResponse,
+            "403": errorResponse,
+          },
+        },
+      },
+      [API.webhook("{id}")]: {
+        delete: {
+          tags: ["Eventos"],
+          summary: "Borrar webhook (sólo JWT de owner)",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: { "204": { description: "Borrado" }, "404": errorResponse, "403": errorResponse },
+        },
+      },
     },
   };
 }
@@ -324,6 +417,11 @@ function page(base: string): string {
     row("GET", "/api/v1/keys", "JWT", "Listar API keys"),
     row("POST", "/api/v1/keys", "JWT owner", "Crear API key (devuelve la clave una vez)"),
     row("DELETE", "/api/v1/keys/:id", "JWT owner", "Revocar API key"),
+    row("GET", "/api/v1/events", "JWT o key", "Historial de eventos (movimiento)"),
+    row("DELETE", "/api/v1/events/:id", "JWT owner", "Borrar un evento"),
+    row("GET", "/api/v1/webhooks", "JWT", "Listar webhooks (sin secretos)"),
+    row("POST", "/api/v1/webhooks", "JWT owner", "Crear webhook (devuelve el secreto una vez)"),
+    row("DELETE", "/api/v1/webhooks/:id", "JWT owner", "Borrar webhook"),
   ].join("\n");
 
   return `<!doctype html>
@@ -428,6 +526,36 @@ socket.on("stream:frame", (header, jpegBytes) =&gt; {
 
 socket.emit("viewer:unsubscribe", { cameraId });  // al cerrar
 // cuidado: no confirmar más de 4 frames en vuelo (MAX_INFLIGHT) o se te saltarán</pre>
+
+<h2>Eventos y webhooks (F6)</h2>
+<p>El <em>agent</em> mide el cambio de escena de cada cámara con FFmpeg
+(<code class="inline">lavfi.scene_score</code>); al superar <code class="inline">MOTION_THRESHOLD</code> manda el aviso
+con la imagen del instante. El servidor la sube a Cloudinary, guarda la fila en <code class="inline">events</code> y
+<strong>POSTea a cada webhook</strong> registrado:</p>
+<pre># Últimos avisos (con la foto del momento)
+curl -s "${base}/api/v1/events?limit=5" -H "X-API-Key: $KEY" \\
+  | jq '.events[] | {at, score, cameraName, snapshot}'
+
+# Registrar un webhook → el secret se devuelve UNA sola vez
+curl -s -X POST ${base}/api/v1/webhooks \\
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \\
+  -d '{"url":"https://mi-app.ejemplo/hooks/camaras"}' | jq -r .secret</pre>
+<pre>{
+  "id": "0f2c…", "type": "motion",
+  "camera": { "id": "3b31…", "name": "O-KAM entrada" },
+  "at": 1790723770000, "createdAt": "2026-09-29T18:36:10.000Z",
+  "score": 0.42, "source": "cameras-center",
+  "snapshot": "https://res.cloudinary.com/drqami3r/image/upload/v1790723770/cameras-center/events/3b31…/1790723770000.jpg"
+}</pre>
+<p>Verificación de la firma en el receptor (obligatoria si la URL es pública):</p>
+<pre>hmac  = HMAC-SHA256(secret, x-cameras-timestamp + "." + rawBody)
+firma = "sha256=" + hex(hmac)          # compara en tiempo constante
+# x-cameras-timestamp dentro de ±300 s  → si no, rechaza (replay)
+# cabeceras: x-cameras-event · x-cameras-timestamp · x-cameras-signature · x-cameras-delivery</pre>
+<p class="note">Reintentos: <code class="inline">WEBHOOK_ATTEMPTS</code> (2) con
+<code class="inline">WEBHOOK_RETRY_MS</code> (1000) de espera y <code class="inline">WEBHOOK_TIMEOUT_MS</code> (8000)
+de tiempo máximo. El estado de cada webhook sale en <code class="inline">GET /api/v1/webhooks</code>
+(<code class="inline">deliveries</code>, <code class="inline">failures</code>, <code class="inline">lastStatus</code>).</p>
 
 <h2>Límites de peticiones</h2>
 <p>Cada respuesta trae <code class="inline">X-RateLimit-Limit</code>, <code class="inline">X-RateLimit-Remaining</code>

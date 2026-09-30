@@ -8,14 +8,16 @@
  *   3. 📸 Capturar abre la imagen (Cloudinary o snapshot del agent)
  *   4. panel 🔑 API keys: crear → la clave se ve UNA vez → aparece en la
  *      lista → revocar (confirm) → queda como "revocada"
- *   5. panel Estado: API keys, límites y enlace a /api/docs
- *   6. /api/docs carga a través del proxy de Vite
- *   7. sin errores sin capturar en la consola
+ *   5. panel 🚨 movimiento: aviso real con su foto + alta/baja de webhook
+ *   6. panel Estado: API keys, límites, movimientos y enlace a /api/docs
+ *   7. /api/docs carga a través del proxy de Vite
+ *   8. sin errores sin capturar en la consola
  *
  * Requiere: `npm run dev` (server + agent + web) y Chrome instalado.
  * Capturas: artifacts/ui/*.png (gitignored).
  */
 import { chromium } from "playwright-core";
+import { io } from "socket.io-client";
 import { readFileSync, mkdirSync, existsSync, readdirSync } from "node:fs";
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -226,15 +228,117 @@ try {
   check(true, "revocada tras confirmar → queda como «revocada»");
   await shot(page, "03-apikey-revocada.png");
 
-  // --- 5. panel Estado ---------------------------------------------------------
+  // --- 5. panel de movimiento y webhooks (F6) ---------------------------------
+  // Un "agent" falso manda un aviso real: así la tarjeta lleva foto de verdad.
+  const apiLogin = await fetch(`${WEB}/api/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  }).then((r) => r.json());
+  const apiAuth = { authorization: `Bearer ${apiLogin.token}` };
+  const cameraId = (await fetch(`${WEB}/api/v1/cameras`).then((r) => r.json())).cameras?.[0]?.id ?? "";
+  check(Boolean(cameraId), "cámara accesible por la API de la UI", cameraId.slice(0, 8));
+
+  let snapshotB64 = "";
+  if (cameraId) {
+    try {
+      const snap = await fetch(`http://localhost:4100/snapshot/${cameraId}.jpg`, { signal: AbortSignal.timeout(5000) });
+      if (snap.ok) snapshotB64 = Buffer.from(await snap.arrayBuffer()).toString("base64");
+    } catch {
+      info("el agent local no sirve snapshots: el aviso irá sin foto");
+    }
+  }
+
+  const agentSocket = io("http://localhost:4000", {
+    transports: ["websocket"],
+    reconnection: false,
+    auth: { token: val("AGENT_TOKEN") },
+  });
+  await new Promise((res) => {
+    agentSocket.on("connect", res);
+    agentSocket.on("connect_error", res);
+    setTimeout(res, 4000);
+  });
+  check(agentSocket.connected, "agent falso conectado al WS");
+
+  const uiAt = Date.now();
+  if (agentSocket.connected && cameraId) {
+    agentSocket.emit("agent:event", {
+      type: "agent:event",
+      cameraId,
+      event: "motion",
+      score: 0.42,
+      at: uiAt,
+      jpegBase64: snapshotB64 || undefined,
+    });
+  }
+
+  let uiEvent = null;
+  for (let i = 0; i < 30 && !uiEvent; i += 1) {
+    const list = await fetch(`${WEB}/api/v1/events?limit=10`, { headers: apiAuth })
+      .then((r) => r.json())
+      .catch(() => ({}));
+    uiEvent = (list.events ?? []).find((e) => e.at === uiAt) ?? null;
+    if (!uiEvent) await new Promise((r) => setTimeout(r, 400));
+  }
+  check(Boolean(uiEvent), "el aviso llega a GET /api/v1/events", uiEvent ? `score ${uiEvent.score}` : "sin evento");
+
+  const eventsPanel = page.locator("details.events-panel");
+  check((await eventsPanel.count()) === 1, "panel «Movimiento y webhooks» presente");
+  await eventsPanel.locator("summary").click();
+  await page.getByText("Últimos avisos").waitFor({ timeout: 10000 });
+  check(true, "el panel se despliega y lista los avisos");
+
+  const eventCard = eventsPanel.locator(".event-card").first();
+  await eventCard.waitFor({ timeout: 25000 }).catch(() => {});
+  check((await eventsPanel.locator(".event-card").count()) >= 1, "la tarjeta del evento aparece");
+  const eventSrc = (await eventCard.locator("img").getAttribute("src").catch(() => "")) ?? "";
+  if (snapshotB64) {
+    check(eventSrc.startsWith("https://res.cloudinary.com/"), "…con la foto del momento en Cloudinary", eventSrc.slice(0, 74));
+  } else {
+    check((await eventsPanel.locator(".event-noimg").count()) >= 1, "…sin foto usa el marcador «sin imagen»");
+  }
+  const cardText = (await eventCard.innerText().catch(() => "")).replace(/\s+/g, " ");
+  check(/42%/.test(cardText), "la tarjeta muestra la puntuación", cardText.slice(0, 80));
+  check(/O-KAM/.test(cardText), "…y el nombre de la cámara", cardText.slice(0, 80));
+  await shot(page, "05-movimiento.png");
+
+  const hookUrl = `http://127.0.0.1:9/ui-${Date.now().toString(36)}`;
+  await eventsPanel.getByPlaceholder("https://mi-app.ejemplo/hooks/camaras").fill(hookUrl);
+  await eventsPanel.getByRole("button", { name: "Añadir webhook" }).click();
+  const hookSecret = eventsPanel.locator(".fresh-key-row code");
+  await hookSecret.waitFor({ timeout: 15000 }).catch(() => {});
+  const secretText = (await hookSecret.innerText().catch(() => "")).trim();
+  check(/^whsec_[0-9a-f]{48}$/.test(secretText), "el webhook creado muestra su secreto una vez", `${secretText.slice(0, 14)}…`);
+  await shot(page, "06-webhook-creado.png");
+
+  const hookRow = eventsPanel.locator(".keys-table tbody tr", { hasText: hookUrl });
+  await hookRow.waitFor({ timeout: 10000 }).catch(() => {});
+  check((await hookRow.count()) === 1, "el webhook aparece en su tabla");
+  check(!(await eventsPanel.locator(".keys-table").innerText()).includes(secretText), "la tabla NO repite el secreto");
+  await eventsPanel.getByRole("button", { name: "Entendido" }).click().catch(() => {});
+
+  await hookRow.getByRole("button", { name: "Borrar" }).click();
+  await hookRow.waitFor({ state: "detached", timeout: 10000 }).catch(() => {});
+  check((await hookRow.count()) === 0, "el webhook se elimina desde el formulario");
+
+  // limpieza: el evento de prueba no se queda en la BD
+  if (uiEvent) {
+    await fetch(`${WEB}/api/v1/events/${uiEvent.id}`, { method: "DELETE", headers: apiAuth }).catch(() => {});
+  }
+  agentSocket.disconnect();
+
+  // --- 6. panel Estado ---------------------------------------------------------
   const estado = page.locator(".card-panel.hint").last();
   const estadoText = await estado.innerText();
   check(/API keys:/.test(estadoText), "Estado muestra las API keys");
   check(/Límites:/.test(estadoText), "Estado muestra los límites de peticiones");
   check(/\/api\/docs/.test(estadoText), "Estado enlaza a la documentación");
-  info(`Estado → ${estadoText.replace(/\s+/g, " ").slice(0, 260)}`);
+  check(/Movimiento:/.test(estadoText), "Estado muestra los eventos de movimiento");
+  check(/Webhooks:/.test(estadoText), "Estado muestra los webhooks");
+  info(`Estado → ${estadoText.replace(/\s+/g, " ").slice(0, 300)}`);
 
-  // --- 6. /api/docs en una pestaña nueva ---------------------------------------
+  // --- 7. /api/docs en una pestaña nueva ---------------------------------------
   const docsLink = page.locator('a[href="/api/docs"]').last();
   const [docsPage] = await Promise.all([context.waitForEvent("page", { timeout: 20000 }), docsLink.click()]);
   await docsPage.waitForLoadState("domcontentloaded", { timeout: 20000 });
@@ -253,7 +357,7 @@ try {
   await docsPage.screenshot({ path: join(OUT, "04-docs.png"), fullPage: false });
   await docsPage.close();
 
-  // --- 7. consola ---------------------------------------------------------------
+  // --- 8. consola ---------------------------------------------------------------
   check(pageErrors.length === 0, `sin errores sin capturar (${pageErrors.length})`, pageErrors[0] ?? "");
   const realFailures = failedResponses.filter((entry) => !/favicon/.test(entry));
   if (realFailures.length > 0) info(`peticiones fallidas: ${realFailures.slice(0, 5).join(" | ")}`);

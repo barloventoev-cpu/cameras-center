@@ -5,11 +5,10 @@ import { redactSecrets, redactUrl } from "@cameras/core";
 import { config } from "../config";
 import { buildFfmpegArgs, type SourceSpec } from "./args";
 import { resolveFfmpegPath } from "./ffmpeg";
+import { splitJpegFrames } from "./jpeg";
 
 type FfmpegProcess = ChildProcessByStdio<null, Readable, Readable>;
 
-const SOI = Buffer.from([0xff, 0xd8, 0xff]);
-const EOI = Buffer.from([0xff, 0xd9]);
 const MAX_BUFFER = 8 * 1024 * 1024;
 
 export type PipelineState = "stopped" | "starting" | "running" | "restarting" | "error";
@@ -248,32 +247,16 @@ export class MjpegPipeline {
       this.state = "running";
       this.restartAttempts = 0;
     }
-    this.buffer = this.buffer.length > 0 ? Buffer.concat([this.buffer, chunk]) : chunk;
+    const merged = this.buffer.length > 0 ? Buffer.concat([this.buffer, chunk]) : chunk;
+    const { frames, rest, overflow } = splitJpegFrames(merged, MAX_BUFFER);
 
-    if (this.buffer.length > MAX_BUFFER) {
+    if (overflow) {
       // Sin EOI: stream corrupto, descartar y esperar al siguiente I-frame
       this.buffer = Buffer.alloc(0);
       return;
     }
-
-    let searchFrom = 0;
-    for (;;) {
-      const soi = this.buffer.indexOf(SOI, searchFrom);
-      if (soi === -1) {
-        // conservar los últimos 2 bytes por si el marcador está partido
-        this.buffer = this.buffer.length > 2 ? this.buffer.subarray(this.buffer.length - 2) : Buffer.alloc(0);
-        return;
-      }
-      const eoi = this.buffer.indexOf(EOI, soi + 3);
-      if (eoi === -1) {
-        this.buffer = this.buffer.subarray(soi);
-        return;
-      }
-      const frame = this.buffer.subarray(soi, eoi + 2);
-      this.buffer = this.buffer.subarray(eoi + 2);
-      searchFrom = 0;
-      this.handleFrame(Buffer.from(frame));
-    }
+    this.buffer = rest;
+    for (const frame of frames) this.handleFrame(frame);
   }
 
   private handleFrame(frame: Buffer) {

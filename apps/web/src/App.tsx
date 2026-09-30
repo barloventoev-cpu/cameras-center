@@ -4,6 +4,7 @@ import { CameraGrid } from "@cameras/ui";
 import { api, getToken, setToken, type HealthResponse } from "./api";
 import { AuthScreen } from "./AuthScreen";
 import { KeysPanel } from "./KeysPanel";
+import { EventsPanel } from "./EventsPanel";
 import { useRelayFrames } from "./useRelayFrames";
 
 /** Fuente de cada cámara: `lan` = MJPEG directo del agent; `relay` = vía server (WS). */
@@ -277,6 +278,13 @@ export function App() {
         }}
       />
 
+      <EventsPanel
+        onAuthLost={() => {
+          setAuthed(false);
+          setError(null);
+        }}
+      />
+
       <h2 className="section-title">Estado</h2>
       <div className="card-panel hint">
         <p style={{ marginTop: 0 }}>
@@ -303,6 +311,17 @@ export function App() {
           <a href="/api/docs" target="_blank" rel="noreferrer">
             /api/docs
           </a>
+        </p>
+        <p style={{ marginBottom: 0 }}>
+          <strong>Movimiento:</strong>{" "}
+          {health?.events
+            ? `${health.events.total} eventos · ${health.events.snapshots} fotos${health.events.snapshotFailures ? ` · ${health.events.snapshotFailures} fallos` : ""}`
+            : "…"}{" "}
+          · <strong>Webhooks:</strong>{" "}
+          {health?.webhooks
+            ? `${health.webhooks.active} activos · ${health.webhooks.deliveries} envíos${health.webhooks.failures ? ` · ${health.webhooks.failures} fallos` : ""}`
+            : "…"}{" "}
+          · <strong>Agent:</strong> {health?.ws?.agents ? "conectado" : "sin conexión"}
         </p>
         <p style={{ marginBottom: 0 }}>
           Las URLs de conexión se guardan cifradas con AES-256-GCM y jamás se devuelven en la API:

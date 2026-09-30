@@ -247,12 +247,12 @@ button.ghost {
   font-weight: 400;
 }
 
-details.keys-panel {
+details.card-panel {
   padding: 8px 16px 16px;
   margin-top: 28px;
 }
 
-details.keys-panel > summary {
+details.card-panel > summary {
   cursor: pointer;
   list-style: none;
   font-size: 13px;
@@ -263,23 +263,23 @@ details.keys-panel > summary {
   padding: 8px 0;
 }
 
-details.keys-panel > summary::-webkit-details-marker {
+details.card-panel > summary::-webkit-details-marker {
   display: none;
 }
 
-details.keys-panel > summary::before {
+details.card-panel > summary::before {
   content: "\25B8  ";
 }
 
-details.keys-panel[open] > summary::before {
+details.card-panel[open] > summary::before {
   content: "\25BE  ";
 }
 
-details.keys-panel > .hint,
-details.keys-panel > .form-grid,
-details.keys-panel > .keys-table,
-details.keys-panel > .error-banner,
-details.keys-panel > .fresh-key {
+details.card-panel > .hint,
+details.card-panel > .form-grid,
+details.card-panel > .keys-table,
+details.card-panel > .error-banner,
+details.card-panel > .fresh-key {
   margin-top: 12px;
 }
 
@@ -363,4 +363,71 @@ fieldset.scopes label {
 .keys-table td:last-child {
   text-align: right;
   white-space: nowrap;
+}
+
+/* --- F6: eventos de movimiento y webhooks ------------------------------- */
+.event-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.event-card {
+  margin: 0;
+  background: #14161c;
+  border: 1px solid #242833;
+  border-radius: 10px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 8px;
+}
+
+.event-card a {
+  display: block;
+  line-height: 0;
+}
+
+.event-card img {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  display: block;
+}
+
+.event-noimg {
+  aspect-ratio: 16 / 9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 12px;
+  background: #0f1117;
+}
+
+.event-card figcaption {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 8px 4px;
+  font-size: 12px;
+}
+
+.event-card > button {
+  margin: 4px 8px 0;
+  align-self: flex-start;
+}
+
+.event-score {
+  color: #f0b429;
+  font-weight: 600;
+}
+
+.event-url {
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
 }

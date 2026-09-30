@@ -5,6 +5,8 @@ import { store } from "../store";
 import { authInfo } from "../db/users";
 import { getSchemaStatus } from "../db/supabase";
 import { cloudinaryStatus, thumbCount, thumbStats } from "../thumbs";
+import { eventCount, eventStats } from "../events";
+import { webhookInfo } from "../webhooks";
 import { frameCache } from "../ws/frames";
 import { keyStore } from "../keys";
 import { authLimiter, globalLimiter, keyLimiter } from "../middleware/rateLimit";
@@ -57,6 +59,9 @@ healthRouter.get(API.health, async (req, res) => {
     integrations: {
       cloudinary: cloudinaryStatus().configured ? "configured" : "pending (define CLOUDINARY_URL)",
     },
+    // F6: eventos de movimiento y webhooks registrados
+    events: await eventInfo(),
+    webhooks: webhookInfo(),
     // F5: API keys de terceros + límites de peticiones
     apiKeys: await keyInfo(),
     rateLimit: {
@@ -74,4 +79,17 @@ async function keyInfo() {
   } catch (error) {
     return { backend: keyStore.backend, error: error instanceof Error ? error.message : "error" };
   }
+}
+
+async function eventInfo() {
+  return {
+    type: "motion",
+    total: await eventCount(),
+    received: eventStats.received,
+    persisted: eventStats.persisted,
+    snapshots: eventStats.snapshots,
+    snapshotFailures: eventStats.snapshotFailures,
+    lastAt: eventStats.lastAt ? new Date(eventStats.lastAt).toISOString() : null,
+    lastError: eventStats.lastError,
+  };
 }

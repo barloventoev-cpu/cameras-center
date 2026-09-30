@@ -4,8 +4,26 @@ import { PipelineRegistry, type AgentCamera } from "./pipeline/registry";
 import { createStreamServer } from "./local/streamServer";
 import { connectToServer, type ServerTransport } from "./transport/server";
 import { RelayController } from "./relay";
+import { MotionManager } from "./motionManager";
+import { motionSettings } from "@cameras/core";
+import type { AgentHello } from "@cameras/protocol";
 
 const registry = new PipelineRegistry();
+const motion = new MotionManager();
+
+// El transport se crea dentro de main(); el detector necesita enviar avisos
+// desde el primer segundo, así que se resuelve con una referencia perezosa.
+const transportRef: { current: ServerTransport | null } = { current: null };
+motion.setEmitter((event) => transportRef.current?.emitEvent(event) ?? false);
+
+// F6: si el proceso sale sin señal (reinicio de `tsx watch`, fin de sesión),
+// se matan los FFmpeg en marcha: sin esto quedan huérfanos abriendo sesiones
+// RTSP a la cámara y robando fps al relay. Las salidas normales pasan por
+// `shutdown()`; este gancho es la red de seguridad.
+process.on("exit", () => {
+  motion.stopAll();
+  registry.stopAll();
+});
 
 /** Descarga la lista de cámaras (con conexión) desde el server. */
 async function syncCameras(): Promise<boolean> {
@@ -19,7 +37,9 @@ async function syncCameras(): Promise<boolean> {
       return false;
     }
     const data = (await response.json()) as { cameras: AgentCamera[] };
-    registry.sync(data.cameras ?? []);
+    const cameras = data.cameras ?? [];
+    registry.sync(cameras);
+    motion.sync(cameras); // F6: detectores de movimiento de las cámaras activas
     return true;
   } catch (error) {
     console.warn(`[agent] sync falló: ${error instanceof Error ? error.message : String(error)}`);
@@ -28,12 +48,14 @@ async function syncCameras(): Promise<boolean> {
 }
 
 async function main() {
+  const motionConfig = motionSettings();
   console.log(`
   📹  cameras-center agent
       id      ${config.agentId}
       server  ${config.serverUrl}
       stream  http://localhost:${config.streamPort}
       data    ${ensureDataDir()}
+      motion  ${motionConfig.enabled ? `activa (umbral ${motionConfig.threshold}, ${motionConfig.sampleFps} fps, espera ${motionConfig.cooldownMs} ms)` : "desactivada"}
 `);
 
   const ffmpeg = await checkFfmpeg();
@@ -50,15 +72,18 @@ async function main() {
   // --- Relay al server (F3) --------------------------------------------------
   // El RelayController necesita el socket y el socket necesita al controller:
   // se resuelve con un contenedor que se rellena un par de líneas más abajo.
-  const transportRef: { current: ServerTransport | null } = { current: null };
   const relay = new RelayController(registry, () => transportRef.current?.socket ?? null);
+
+  // F6: el agent declara que sabe detectar movimiento si la detección está activa
+  const capabilities: AgentHello["capabilities"] = ["rtsp", "mjpeg", "test"];
+  if (motionSettings().enabled) capabilities.push("motion");
 
   const transport = connectToServer(
     () => ({
       agentId: config.agentId,
       version: config.version,
       cameras: registry.listCameras(),
-      capabilities: ["rtsp", "mjpeg", "test"],
+      capabilities,
     }),
     {
       onStartStream: (cameraId) => relay.attach(cameraId),
@@ -69,7 +94,7 @@ async function main() {
   transportRef.current = transport;
 
   // --- Servidor de streams local (visión en LAN) ---
-  const streamServer = createStreamServer(registry, config.streamPort);
+  const streamServer = createStreamServer(registry, config.streamPort, () => motion.status());
   streamServer.listen(config.streamPort, () => {
     console.log(`  🎞  stream   http://localhost:${config.streamPort}/stream/:id.mjpg\n`);
   });
@@ -87,6 +112,7 @@ async function main() {
     clearInterval(syncTimer);
     clearInterval(statusTimer);
     relay.detachAll("shutdown");
+    motion.stopAll();
     registry.stopAll();
     streamServer.close();
     transport.socket.disconnect();

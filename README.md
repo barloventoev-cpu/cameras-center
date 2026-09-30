@@ -211,6 +211,51 @@ curl -o foto.jpg -H "X-API-Key: cc_live_…" http://localhost:4000/api/v1/camera
 npm run test:f5        # 62 comprobaciones end-to-end
 ```
 
+## Detección de movimiento y webhooks (F6)
+
+El agent lanza **un FFmpeg por cámara** —distinto del de visión— que mide la
+puntuación de escena de cada muestra y sólo emite el JPEG cuando supera el
+umbral: la foto del aviso es, literalmente, la del instante.
+
+```
+FFmpeg (2 fps) ──stderr──► lavfi.scene_score=…   ¿ ≥ MOTION_THRESHOLD?
+      └────stdout────► JPEG sólo al superar el umbral
+                            │
+                            ▼  agent:event (WS + imagen en base64)
+server ──► Cloudinary (events/<cámara>/<ms>) ──► fila en events ──► webhooks
+```
+
+- **Ajustes** (`.env`, los lee el agent): `MOTION_ENABLED`, `MOTION_FPS`,
+  `MOTION_THRESHOLD`, `MOTION_COOLDOWN_MS` (enfriamiento entre avisos de la
+  misma cámara) y `MOTION_WIDTH` (ancho de la foto).
+- **Umbral**: con la O-KAM de esta red la escena en reposo ronda 0.0001 y el
+  ruido máximo medido ha sido 0.0081 (119 muestras), así que `0.03` deja margen
+  para no disparar con el ruido. Se afina con
+  `npm run probe:motion -- --segundos 60`, que imprime mediana, pico, JPEG
+  emitidos y umbral sugerido; en caliente, `GET :4100/api/motion` (`maxScore`,
+  `detections`).
+- **El detector mantiene su propia sesión RTSP** aunque nadie esté mirando (la
+  O-KAM admite varias sesiones concurrentes); se apaga con `MOTION_ENABLED=false`.
+- **Server**: sube la foto a Cloudinary, guarda la fila (**sin migración**: la
+  tabla `events` ya tenía `thumbnail_url`) y avisa a los webhooks.
+- **Webhooks**: `POST`/`GET`/`DELETE /api/v1/webhooks` (JWT de owner; el secreto
+  se devuelve **una sola vez**, al crearlo). Cada envío lleva
+  `x-cameras-signature: sha256=HMAC-SHA256(secreto, timestamp.cuerpo)` y
+  reintenta (`WEBHOOK_ATTEMPTS`, `WEBHOOK_RETRY_MS`, `WEBHOOK_TIMEOUT_MS`);
+  éxitos, fallos y último error salen en `/api/health`. Se siembran en `.env`
+  con `WEBHOOK_URL` (+ `WEBHOOK_SECRET`).
+- **API**: `GET /api/v1/events[?cameraId=&type=&limit=]` (JWT o API key con
+  scope `read`), `DELETE /api/v1/events/:id` (JWT) y `event:new` en directo por
+  el WebSocket.
+- **UI**: panel «Movimiento y webhooks» (avisos con su foto, crear y borrar
+  webhooks) y los contadores en la sección **Estado**.
+
+```bash
+npm run probe:motion -- --segundos 60   # sonda de umbral contra la cámara real
+npm run test:motion                     # 32 checks con fuente sintética
+npm run test:f6                         # 75 comprobaciones end-to-end
+```
+
 ## Comandos
 
 | Comando | Descripción |
@@ -228,6 +273,9 @@ npm run test:f5        # 62 comprobaciones end-to-end
 | `npm run test:onvif` | F4: auto-test de la sonda ONVIF contra un mock |
 | `npm run test:f4` | F4: health + thumbnails en Cloudinary end-to-end |
 | `npm run test:f5` | F5: API keys, docs y rate limits end-to-end |
+| `npm run probe:motion` | F6: sonda de umbral contra la cámara real (`--test`: fuente sintética) |
+| `npm run test:motion` | F6: auto-prueba del detector con `testsrc` |
+| `npm run test:f6` | F6: movimiento, snapshots y webhooks end-to-end |
 | `npm run test:ui` | Pruebas de interfaz con Chrome headless (capturas en `artifacts/ui`) |
 
 ## Roadmap
@@ -240,7 +288,7 @@ npm run test:f5        # 62 comprobaciones end-to-end
 | **F3** | Relay agent → server → web remoto (multi-cámara) | ✅ |
 | **F4** | Descubrimiento ONVIF + health + thumbnails en Cloudinary | ✅ |
 | **F5** | API pública con API keys, docs y rate limits | ✅ |
-| **F6** | Detección de movimiento + snapshots + webhooks | ⬜ |
+| **F6** | Detección de movimiento + snapshots + webhooks | ✅ |
 | **F7** | Grabación local de clips por eventos | ⬜ |
 
 ## Decisiones de diseño

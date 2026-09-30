@@ -19,7 +19,7 @@ export const AgentHelloSchema = z.object({
   version: z.string().min(1),
   cameras: z.array(CameraSchema),
   capabilities: z
-    .array(z.enum(["rtsp", "onvif", "mjpeg", "record", "test"]))
+    .array(z.enum(["rtsp", "onvif", "mjpeg", "record", "test", "motion"]))
     .default([]),
 });
 export type AgentHello = z.infer<typeof AgentHelloSchema>;
@@ -46,11 +46,31 @@ export const AgentErrorSchema = z.object({
 });
 export type AgentError = z.infer<typeof AgentErrorSchema>;
 
+/**
+ * F6: evento detectado por el agent (movimiento de escena).
+ * `jpegBase64` es la imagen del momento: el server la sube a Cloudinary y
+ * guarda la URL en `events`.
+ */
+export const AgentEventSchema = z.object({
+  type: z.literal("agent:event"),
+  cameraId: z.string().min(1),
+  event: z.enum(["motion"]).default("motion"),
+  /** Puntuación de escena FFmpeg (0..1) que superó el umbral. */
+  score: z.number().min(0).max(1),
+  /** Época (ms) en que se detectó. */
+  at: z.number().int(),
+  /** JPEG del instante del aviso, en base64 (opcional). */
+  jpegBase64: z.string().optional(),
+  agentId: z.string().optional(),
+});
+export type AgentEvent = z.infer<typeof AgentEventSchema>;
+
 export const AgentMessageSchema = z.discriminatedUnion("type", [
   AgentHelloSchema,
   AgentStatusSchema,
   AgentThumbSchema,
   AgentErrorSchema,
+  AgentEventSchema,
 ]);
 export type AgentMessage = z.infer<typeof AgentMessageSchema>;
 
@@ -122,6 +142,28 @@ export const StreamMetaSchema = z.object({
 export type StreamMeta = z.infer<typeof StreamMetaSchema>;
 
 // ---------------------------------------------------------------------------
+// F6: eventos (movimiento) server -> web
+// ---------------------------------------------------------------------------
+
+export const EventSummarySchema = z.object({
+  id: z.string(),
+  cameraId: z.string(),
+  cameraName: z.string().nullable().default(null),
+  type: z.string().default("motion"),
+  score: z.number().nullable().default(null),
+  at: z.number(),
+  createdAt: z.string(),
+  snapshot: z.string().nullable().default(null),
+});
+export type EventSummary = z.infer<typeof EventSummarySchema>;
+
+export const EventNewSchema = z.object({
+  type: z.literal("event:new"),
+  event: EventSummarySchema,
+});
+export type EventNew = z.infer<typeof EventNewSchema>;
+
+// ---------------------------------------------------------------------------
 // CANALES DE EVENTOS (nombres compartidos)
 // ---------------------------------------------------------------------------
 
@@ -129,6 +171,10 @@ export const CHANNELS = {
   agentHello: "agent:hello",
   agentStatus: "agent:status",
   agentThumb: "agent:thumb",
+  /** F6: aviso de evento (movimiento) con la imagen en base64. */
+  agentEvent: "agent:event",
+  /** F6: el server avisa a la web de un evento nuevo. */
+  eventNew: "event:new",
   serverStartStream: "server:startStream",
   serverStopStream: "server:stopStream",
   serverConfigSync: "server:configSync",
@@ -176,6 +222,14 @@ export function safeParseViewerMessage(raw: unknown) {
 
 export function parseStreamMeta(raw: unknown): StreamMeta {
   return StreamMetaSchema.parse(raw);
+}
+
+export function parseAgentEvent(raw: unknown): AgentEvent {
+  return AgentEventSchema.parse(raw);
+}
+
+export function safeParseAgentEvent(raw: unknown) {
+  return AgentEventSchema.safeParse(raw);
 }
 
 // Los frames van por el plano binario: este header viaja como primer argumento

@@ -86,6 +86,19 @@ export interface HealthResponse {
     auth: { rpm: number; buckets?: number; requests?: number; blocked?: number };
     principal: { buckets?: number; requests?: number; blocked?: number };
   };
+  /** F6: eventos de movimiento */
+  events?: {
+    type: string;
+    total: number;
+    received: number;
+    persisted: number;
+    snapshots: number;
+    snapshotFailures: number;
+    lastAt: string | null;
+    lastError: string | null;
+  };
+  /** F6: webhooks registrados */
+  webhooks?: WebhookStats;
 }
 
 export interface AuthStatus {
@@ -109,6 +122,46 @@ export interface ApiKeyInfo {
   revoked: boolean;
   createdAt: string;
   lastUsedAt: string | null;
+}
+
+/** F6: evento de movimiento detectado por el agent. */
+export interface MotionEvent {
+  id: string;
+  cameraId: string;
+  cameraName: string | null;
+  type: string;
+  score: number | null;
+  at: number;
+  createdAt: string;
+  snapshot: string | null;
+}
+
+/** F6: webhook registrado (el secreto sólo se ve al crearlo). */
+export interface WebhookInfo {
+  id: string;
+  url: string;
+  events: string[];
+  active: boolean;
+  createdAt: string;
+  deliveries: number;
+  failures: number;
+  lastStatus: number | null;
+  lastAt: string | null;
+  lastError: string | null;
+}
+
+export interface WebhookStats {
+  configured: boolean;
+  total: number;
+  active: number;
+  seeded: number;
+  timeoutMs: number;
+  attempts: number;
+  deliveries: number;
+  failures: number;
+  lastStatus: number | null;
+  lastAt: string | null;
+  lastError: string | null;
 }
 
 export const api = {
@@ -158,6 +211,27 @@ export const api = {
       request<{ key: string; apikey: ApiKeyInfo }>(API.keys, { method: "POST", body: JSON.stringify(payload) }),
     revoke: async (id: string): Promise<void> => {
       await request<void>(API.key(id), { method: "DELETE" });
+    },
+  },
+
+  /** F6: historial de eventos de movimiento. */
+  events: {
+    list: async (limit = 20): Promise<MotionEvent[]> => {
+      const data = await request<{ events: MotionEvent[] }>(`${API.events}?limit=${limit}`);
+      return data.events ?? [];
+    },
+    remove: async (id: string): Promise<void> => {
+      await request<void>(API.event(id), { method: "DELETE" });
+    },
+  },
+
+  /** F6: webhooks (el secreto sólo se devuelve al crearlo). */
+  webhooks: {
+    list: async (): Promise<{ webhooks: WebhookInfo[]; stats: WebhookStats }> => request(API.webhooks),
+    create: async (payload: { url: string; secret?: string }): Promise<{ webhook: WebhookInfo; secret: string }> =>
+      request(API.webhooks, { method: "POST", body: JSON.stringify(payload) }),
+    remove: async (id: string): Promise<void> => {
+      await request<void>(API.webhook(id), { method: "DELETE" });
     },
   },
 };
