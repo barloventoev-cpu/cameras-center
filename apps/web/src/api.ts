@@ -134,6 +134,8 @@ export interface MotionEvent {
   at: number;
   createdAt: string;
   snapshot: string | null;
+  /** F7: URL del clip MP4 grabado con este evento (null si no tiene). */
+  clip: string | null;
 }
 
 /** F6: webhook registrado (el secreto sólo se ve al crearlo). */
@@ -214,14 +216,28 @@ export const api = {
     },
   },
 
-  /** F6: historial de eventos de movimiento. */
+  /** F6/F7: historial de eventos (avisos de movimiento + clips grabados). */
   events: {
     list: async (limit = 20): Promise<MotionEvent[]> => {
-      const data = await request<{ events: MotionEvent[] }>(`${API.events}?limit=${limit}`);
-      return data.events ?? [];
+      // dos consultas y se mezclan: el endpoint filtra por `type` y por defecto
+      // devuelve sólo los de movimiento (así lo exige su API)
+      const [motion, clips] = await Promise.all([
+        request<{ events: MotionEvent[] }>(`${API.events}?type=motion&limit=${limit}`),
+        request<{ events: MotionEvent[] }>(`${API.events}?type=clip&limit=${limit}`),
+      ]);
+      return [...(motion.events ?? []), ...(clips.events ?? [])]
+        .sort((a, b) => b.at - a.at)
+        .slice(0, limit);
     },
     remove: async (id: string): Promise<void> => {
       await request<void>(API.event(id), { method: "DELETE" });
+    },
+    /** F7: pide al agent que grabe un clip (202 = pedido, la subida llega después). */
+    record: async (cameraId: string, durationMs?: number): Promise<void> => {
+      await request(`${API.camera(cameraId)}/clip`, {
+        method: "POST",
+        body: JSON.stringify(durationMs ? { durationMs } : {}),
+      });
     },
   },
 

@@ -5,16 +5,20 @@ import { createStreamServer } from "./local/streamServer";
 import { connectToServer, type ServerTransport } from "./transport/server";
 import { RelayController } from "./relay";
 import { MotionManager } from "./motionManager";
-import { motionSettings } from "@cameras/core";
+import { ClipManager } from "./clip";
+import { clipSettings, motionSettings } from "@cameras/core";
 import type { AgentHello } from "@cameras/protocol";
 
 const registry = new PipelineRegistry();
 const motion = new MotionManager();
+const clips = new ClipManager();
 
 // El transport se crea dentro de main(); el detector necesita enviar avisos
 // desde el primer segundo, así que se resuelve con una referencia perezosa.
 const transportRef: { current: ServerTransport | null } = { current: null };
 motion.setEmitter((event) => transportRef.current?.emitEvent(event) ?? false);
+clips.setEmitter((clip) => transportRef.current?.emitClipReady(clip) ?? false);
+motion.setClipRecorder(clips);
 
 // F6: si el proceso sale sin señal (reinicio de `tsx watch`, fin de sesión),
 // se matan los FFmpeg en marcha: sin esto quedan huérfanos abriendo sesiones
@@ -22,6 +26,7 @@ motion.setEmitter((event) => transportRef.current?.emitEvent(event) ?? false);
 // `shutdown()`; este gancho es la red de seguridad.
 process.on("exit", () => {
   motion.stopAll();
+  clips.stopAll();
   registry.stopAll();
 });
 
@@ -40,6 +45,7 @@ async function syncCameras(): Promise<boolean> {
     const cameras = data.cameras ?? [];
     registry.sync(cameras);
     motion.sync(cameras); // F6: detectores de movimiento de las cámaras activas
+    clips.sync(cameras); // F7: specs para grabar clips cuando haya aviso o petición
     return true;
   } catch (error) {
     console.warn(`[agent] sync falló: ${error instanceof Error ? error.message : String(error)}`);
@@ -49,6 +55,7 @@ async function syncCameras(): Promise<boolean> {
 
 async function main() {
   const motionConfig = motionSettings();
+  const clipsConfig = clipSettings();
   console.log(`
   📹  cameras-center agent
       id      ${config.agentId}
@@ -56,6 +63,7 @@ async function main() {
       stream  http://localhost:${config.streamPort}
       data    ${ensureDataDir()}
       motion  ${motionConfig.enabled ? `activa (umbral ${motionConfig.threshold}, ${motionConfig.sampleFps} fps, espera ${motionConfig.cooldownMs} ms)` : "desactivada"}
+      clips   ${clipsConfig.enabled ? `${Math.round(clipsConfig.durationMs / 1000)} s por aviso (conserva ${clipsConfig.keep})` : "automáticos off (sólo manual)"}
 `);
 
   const ffmpeg = await checkFfmpeg();
@@ -75,7 +83,8 @@ async function main() {
   const relay = new RelayController(registry, () => transportRef.current?.socket ?? null);
 
   // F6: el agent declara que sabe detectar movimiento si la detección está activa
-  const capabilities: AgentHello["capabilities"] = ["rtsp", "mjpeg", "test"];
+  // F7: y que sabe grabar clips (siempre: los manuales funcionan igualmente)
+  const capabilities: AgentHello["capabilities"] = ["rtsp", "mjpeg", "test", "record"];
   if (motionSettings().enabled) capabilities.push("motion");
 
   const transport = connectToServer(
@@ -89,12 +98,18 @@ async function main() {
       onStartStream: (cameraId) => relay.attach(cameraId),
       onStopStream: (cameraId, reason) => relay.detach(cameraId, reason),
       onDisconnect: () => relay.detachAll("sin conexión al server"),
+      onRecordClip: (cameraId, durationMs) => clips.record(cameraId, "manual", durationMs),
     },
   );
   transportRef.current = transport;
 
   // --- Servidor de streams local (visión en LAN) ---
-  const streamServer = createStreamServer(registry, config.streamPort, () => motion.status());
+  const streamServer = createStreamServer(
+    registry,
+    config.streamPort,
+    () => motion.status(),
+    () => clips.status(),
+  );
   streamServer.listen(config.streamPort, () => {
     console.log(`  🎞  stream   http://localhost:${config.streamPort}/stream/:id.mjpg\n`);
   });
@@ -113,6 +128,7 @@ async function main() {
     clearInterval(statusTimer);
     relay.detachAll("shutdown");
     motion.stopAll();
+    clips.stopAll();
     registry.stopAll();
     streamServer.close();
     transport.socket.disconnect();

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { z } from "zod";
 import { CreateCameraSchema } from "@cameras/protocol";
 import { store, toPublicCamera } from "../store";
 import { requireAuth, requirePrincipal } from "../middleware/auth";
@@ -204,6 +205,55 @@ camerasRouter.post("/:id/thumbnail", requireAuth, async (req, res) => {
     });
   } catch (error) {
     handleError(res, error, "capture-thumb");
+  }
+});
+
+/** F7: cuerpo opcional de `POST /:id/clip`. */
+const ClipRequestSchema = z
+  .object({ durationMs: z.number().int().min(1000).max(60_000).optional() })
+  .default({});
+
+/**
+ * Pide al agent que grabe un clip MP4 — F7.
+ *
+ * Sólo JWT (como el resto de escrituras). El agent graba `-t N` con `-c:v copy`,
+ * sube el MP4 a Cloudinary y contesta con `agent:clipReady`: el server lo pega
+ * en el aviso reciente de esa cámara o, si no lo hay, crea un evento `type=clip`.
+ * El `202` sólo significa «pedido»: la grabación es asíncrona.
+ */
+camerasRouter.post("/:id/clip", requireAuth, async (req, res) => {
+  const id = req.params.id;
+  if (!id) return res.status(400).json({ error: "Falta el id" });
+
+  const parsed = ClipRequestSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Payload invalido", issues: parsed.error.issues });
+  }
+
+  try {
+    const camera = await store.get(id);
+    if (!camera) return res.status(404).json({ error: "Camara no encontrada" });
+
+    const gateway = req.app.locals.gateway as
+      | { requestClip(cameraId: string, durationMs?: number): boolean }
+      | undefined;
+    if (!gateway) return res.status(503).json({ error: "Relay no disponible" });
+
+    const durationMs = parsed.data.durationMs;
+    if (!gateway.requestClip(id, durationMs)) {
+      return res.status(409).json({ error: "Sin agent conectado: no se puede grabar", reason: "sin-agent" });
+    }
+
+    res.status(202).json({
+      clip: {
+        cameraId: id,
+        durationMs: durationMs ?? null,
+        requestedAt: Date.now(),
+        note: "Al terminar llega un evento type=clip (o se pega al aviso reciente de la cámara).",
+      },
+    });
+  } catch (error) {
+    handleError(res, error, "record-clip");
   }
 });
 

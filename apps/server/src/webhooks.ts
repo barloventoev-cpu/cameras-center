@@ -50,6 +50,8 @@ export interface WebhookPayload {
   createdAt: string;
   score: number | null;
   snapshot: string | null;
+  /** F7: URL del clip MP4 si el evento lo tiene (sólo se informa si existe). */
+  clip?: string;
   source: "cameras-center";
 }
 

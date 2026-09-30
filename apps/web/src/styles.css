@@ -225,6 +225,17 @@ button.ghost {
   font-size: 14px;
 }
 
+/* F7: aviso informativo (pedido de grabación) — verde, no es un error */
+.notice-banner {
+  background: #12261a80;
+  border: 1px solid #214d33;
+  color: #86d9a8;
+  padding: 10px 14px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  font-size: 14px;
+}
+
 .hint {
   color: var(--muted);
   font-size: 13px;
@@ -393,6 +404,15 @@ fieldset.scopes label {
   aspect-ratio: 16 / 9;
   object-fit: cover;
   display: block;
+}
+
+/* F7: clip MP4 (el póster es la foto del aviso que lo originó) */
+.event-clip {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  display: block;
+  background: #0f1117;
 }
 
 .event-noimg {

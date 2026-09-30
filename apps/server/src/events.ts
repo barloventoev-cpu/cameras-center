@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { parseCloudinaryUrl, uploadJpeg } from "@cameras/core";
-import type { AgentEvent, EventSummary } from "@cameras/protocol";
+import type { AgentClipReady, AgentEvent, EventSummary } from "@cameras/protocol";
 import { hasSupabase } from "./config";
 import { store } from "./store";
 import { deliverWebhooks } from "./webhooks";
@@ -14,11 +14,29 @@ import { deliverWebhooks } from "./webhooks";
  *   2. guarda la fila en `events` (type='motion', sin migración: la tabla ya
  *      existe desde F2 con `thumbnail_url` y `payload`),
  *   3. avisa a los webhooks registrados.
+ *
+ * F7 — clips:
+ *
+ *   El agent manda `agent:clipReady` con la URL de un MP4 ya subido. Si hay un
+ *   aviso reciente de esa cámara se le pega el clip en `payload.clip`; si no,
+ *   se crea una fila `type='clip'` (grabación pedida a mano). Todo sigue sin
+ *   migración: el clip vive en `payload`.
  */
 
 const EVENT_TYPE = "motion";
 const FOLDER = process.env.CLOUDINARY_FOLDER || "cameras-center";
 const MEMORY_LIMIT = 200;
+/** F7: el clip se adhiere al aviso reciente si este no tiene más de… */
+const CLIP_LINK_MS = 60_000;
+
+/** Lo que se guarda en `payload.clip` de una fila de evento. */
+interface ClipPayload {
+  url: string;
+  durationMs: number;
+  bytes: number;
+  at: number;
+  trigger: "motion" | "manual";
+}
 
 export interface StoredEvent {
   id: string;
@@ -29,6 +47,8 @@ export interface StoredEvent {
   at: number;
   createdAt: string;
   snapshot: string | null;
+  /** F7: URL del clip MP4 asociado (null si no tiene). */
+  clip: string | null;
 }
 
 export const eventStats = {
@@ -36,6 +56,16 @@ export const eventStats = {
   persisted: 0,
   snapshots: 0,
   snapshotFailures: 0,
+  lastAt: null as number | null,
+  lastError: null as string | null,
+};
+
+/** F7: qué ha pasado con los clips recibidos del agent. */
+export const clipStats = {
+  received: 0,
+  attached: 0,
+  created: 0,
+  failures: 0,
   lastAt: null as number | null,
   lastError: null as string | null,
 };
@@ -56,10 +86,16 @@ export async function recordAgentEvent(message: AgentEvent): Promise<StoredEvent
     at: message.at,
     createdAt: new Date(message.at).toISOString(),
     snapshot,
+    clip: null,
   };
 
   try {
-    stored.id = await persist(stored, message);
+    stored.id = await persist(stored, {
+      score: stored.score,
+      at: stored.at,
+      agentEvent: message.event,
+      snapshot: stored.snapshot,
+    });
     eventStats.persisted += 1;
     eventStats.lastAt = Date.now();
   } catch (error) {
@@ -80,6 +116,8 @@ export async function recordAgentEvent(message: AgentEvent): Promise<StoredEvent
       createdAt: stored.createdAt,
       score: stored.score,
       snapshot: stored.snapshot,
+      // F7: el clip llega después (o no llega); sólo se informa si existe
+      ...(stored.clip ? { clip: stored.clip } : {}),
       source: "cameras-center",
     });
     if (result.attempted > 0) {
@@ -90,6 +128,84 @@ export async function recordAgentEvent(message: AgentEvent): Promise<StoredEvent
   }
 
   return stored;
+}
+
+/**
+ * F7 — el agent avisa de un clip grabado y subido.
+ *
+ * Si hay un aviso de movimiento reciente de esa cámara (≤ 60 s) el clip se le
+ * pega en `payload.clip`: es *su* vídeo. Si no (grabación manual, o el aviso no
+ * se pudo guardar) se crea una fila `type='clip'`.
+ */
+export async function recordAgentClip(message: AgentClipReady): Promise<StoredEvent | null> {
+  clipStats.received += 1;
+  const cameraName = await cameraNameOf(message.cameraId);
+  const clip: ClipPayload = {
+    url: message.url,
+    durationMs: message.durationMs,
+    bytes: message.bytes,
+    at: message.at,
+    trigger: message.trigger,
+  };
+
+  try {
+    const recent = await listEvents({ type: EVENT_TYPE, cameraId: message.cameraId, limit: 1 });
+    const target = recent[0] ?? null;
+
+    if (target && Date.now() - target.at <= CLIP_LINK_MS) {
+      await attachClip(target.id, clip);
+      target.clip = message.url;
+      clipStats.attached += 1;
+      clipStats.lastAt = Date.now();
+      console.log(
+        `[events] 🎬 clip ${message.bytes} B pegado al aviso ${target.id} (${message.durationMs} ms, ${message.trigger})`,
+      );
+      return target;
+    }
+
+    const stored: StoredEvent = {
+      id: "",
+      cameraId: message.cameraId,
+      cameraName,
+      type: "clip",
+      score: null,
+      at: message.at,
+      createdAt: new Date(message.at).toISOString(),
+      snapshot: null,
+      clip: message.url,
+    };
+    stored.id = await persist(stored, {
+      at: stored.at,
+      agentEvent: "clip",
+      clip,
+      trigger: message.trigger,
+    });
+    clipStats.created += 1;
+    clipStats.lastAt = Date.now();
+    console.log(
+      `[events] 🎬 evento clip ${stored.id} creado (${message.durationMs} ms, ${message.trigger})`,
+    );
+
+    // un clip manual es un evento como cualquier otro: se notifica igualmente
+    await deliverWebhooks({
+      id: stored.id,
+      type: stored.type,
+      camera: { id: stored.cameraId, name: stored.cameraName },
+      at: stored.at,
+      createdAt: stored.createdAt,
+      score: null,
+      snapshot: null,
+      clip: stored.clip ?? undefined,
+      source: "cameras-center",
+    }).catch(() => undefined);
+
+    return stored;
+  } catch (error) {
+    clipStats.failures += 1;
+    clipStats.lastError = error instanceof Error ? error.message : String(error);
+    console.warn("[events] ✗ clip no guardado:", clipStats.lastError);
+    return null;
+  }
 }
 
 export interface ListEventsOptions {
@@ -165,7 +281,8 @@ export async function latestEvent(): Promise<StoredEvent | null> {
   return events[0] ?? null;
 }
 
-export function toSummary(event: StoredEvent): EventSummary {  return {
+export function toSummary(event: StoredEvent): EventSummary {
+  return {
     id: event.id,
     cameraId: event.cameraId,
     cameraName: event.cameraName,
@@ -174,6 +291,7 @@ export function toSummary(event: StoredEvent): EventSummary {  return {
     at: event.at,
     createdAt: event.createdAt,
     snapshot: event.snapshot,
+    clip: event.clip,
   };
 }
 
@@ -207,14 +325,7 @@ async function uploadSnapshot(message: AgentEvent): Promise<string | null> {
   }
 }
 
-async function persist(event: StoredEvent, message: AgentEvent): Promise<string> {
-  const payload = {
-    score: event.score,
-    at: event.at,
-    agentEvent: message.event,
-    snapshot: event.snapshot,
-  };
-
+async function persist(event: StoredEvent, payload: Record<string, unknown>): Promise<string> {
   if (!hasSupabase) {
     const id = `mem-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     memoryEvents.unshift({ ...event, id });
@@ -240,6 +351,27 @@ async function persist(event: StoredEvent, message: AgentEvent): Promise<string>
   return row.id;
 }
 
+/**
+ * F7: pega el clip al payload de la fila (mezcla, no sobrescribe: el aviso
+ * conserva su `score`/`snapshot`). En memoria el clip ya vive en el propio
+ * evento, así que sólo se actualiza el mapa.
+ */
+async function attachClip(id: string, clip: ClipPayload): Promise<void> {
+  const memory = memoryEvents.find((event) => event.id === id);
+  if (memory) {
+    memory.clip = clip.url;
+    return;
+  }
+
+  const { getSupabase } = await import("./db/supabase");
+  const client = getSupabase();
+  const { data, error } = await client.from("events").select("payload").eq("id", id).single();
+  if (error) throw new Error(error.message);
+  const payload = { ...(((data ?? {}) as { payload?: Record<string, unknown> }).payload ?? {}), clip };
+  const { error: updateError } = await client.from("events").update({ payload }).eq("id", id);
+  if (updateError) throw new Error(updateError.message);
+}
+
 interface EventRow {
   id: string;
   camera_id: string | null;
@@ -252,6 +384,7 @@ interface EventRow {
 function rowToEvent(row: EventRow, names: Map<string, string>): StoredEvent {
   const payload = row.payload ?? {};
   const at = Number(payload.at ?? Date.parse(row.created_at));
+  const clip = payload.clip as ClipPayload | undefined;
   return {
     id: row.id,
     cameraId: row.camera_id ?? "",
@@ -261,6 +394,7 @@ function rowToEvent(row: EventRow, names: Map<string, string>): StoredEvent {
     at: Number.isFinite(at) ? at : Date.now(),
     createdAt: new Date(row.created_at).toISOString(),
     snapshot: row.thumbnail_url,
+    clip: clip && typeof clip.url === "string" ? clip.url : null,
   };
 }
 

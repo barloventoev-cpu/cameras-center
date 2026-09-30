@@ -27,6 +27,7 @@
     "test:f5": "node tools/f5-test.mjs",
     "test:motion": "tsx tools/motion-selftest.ts",
     "test:f6": "node tools/f6-test.mjs",
+    "test:f7": "tsx tools/f7-test.ts",
     "test:ui": "node tools/ui-test.mjs",
     "build": "npm run build --workspaces --if-present",
     "start": "npm run start -w @cameras/server",

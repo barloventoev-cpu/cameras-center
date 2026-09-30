@@ -5,7 +5,7 @@ import { store } from "../store";
 import { authInfo } from "../db/users";
 import { getSchemaStatus } from "../db/supabase";
 import { cloudinaryStatus, thumbCount, thumbStats } from "../thumbs";
-import { eventCount, eventStats } from "../events";
+import { clipStats, eventCount, eventStats } from "../events";
 import { webhookInfo } from "../webhooks";
 import { frameCache } from "../ws/frames";
 import { keyStore } from "../keys";
@@ -61,6 +61,15 @@ healthRouter.get(API.health, async (req, res) => {
     },
     // F6: eventos de movimiento y webhooks registrados
     events: await eventInfo(),
+    // F7: clips recibidos del agent (pegados a un aviso o como evento type=clip)
+    clips: {
+      received: clipStats.received,
+      attached: clipStats.attached,
+      created: clipStats.created,
+      failures: clipStats.failures,
+      lastAt: clipStats.lastAt ? new Date(clipStats.lastAt).toISOString() : null,
+      lastError: clipStats.lastError,
+    },
     webhooks: webhookInfo(),
     // F5: API keys de terceros + límites de peticiones
     apiKeys: await keyInfo(),

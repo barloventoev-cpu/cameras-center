@@ -23,7 +23,7 @@ function handleError(res: import("express").Response, error: unknown, context: s
 const CreateWebhookSchema = z.object({
   url: z.string().trim().url("URL no válida").max(500),
   secret: z.string().trim().min(8, "El secreto necesita 8 caracteres").max(128).optional(),
-  events: z.array(z.enum(["motion"])).min(1).max(5).optional(),
+  events: z.array(z.enum(["motion", "clip"])).min(1).max(5).optional(),
 });
 
 webhooksRouter.get("/", requireAuth, (_req, res) => {

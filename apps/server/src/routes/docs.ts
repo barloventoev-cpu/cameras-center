@@ -96,16 +96,22 @@ function openapi(base: string) {
         },
         Event: {
           type: "object",
-          description: "Aviso de movimiento detectado por el agent (F6)",
+          description: "Aviso de movimiento detectado por el agent (F6) o clip grabado (F7)",
           properties: {
             id: { type: "string", format: "uuid" },
             cameraId: { type: "string", format: "uuid" },
             cameraName: { type: "string", nullable: true },
-            type: { type: "string", enum: ["motion"] },
+            type: { type: "string", enum: ["motion", "clip"] },
             score: { type: "number", nullable: true, description: "Puntuación de escena FFmpeg (0..1)" },
             at: { type: "integer", description: "Época (ms) de la detección" },
             createdAt: { type: "string", format: "date-time" },
             snapshot: { type: "string", format: "uri", nullable: true, description: "Imagen del momento en Cloudinary" },
+            clip: {
+              type: "string",
+              format: "uri",
+              nullable: true,
+              description: "F7: URL del clip MP4 en Cloudinary (vacío si aún no se ha grabado)",
+            },
           },
         },
         Webhook: {
@@ -266,6 +272,31 @@ function openapi(base: string) {
           responses: { "200": { description: "URL de Cloudinary" }, "409": errorResponse, "401": errorResponse },
         },
       },
+      "/api/v1/cameras/{id}/clip": {
+        post: {
+          tags: ["Eventos"],
+          summary: "Grabar un clip MP4 en la cámara (sólo JWT)",
+          description:
+            "F7: el server se lo pide al agent por WebSocket. El agent graba `CLIP_DURATION_MS` " +
+            "(`durationMs` en el cuerpo, entre 1 s y 60 s), sube el MP4 a Cloudinary y devuelve " +
+            "`agent:clipReady`: el server lo pega en el aviso reciente de esa cámara o, si no lo hay, " +
+            "crea un evento `type=clip`. El 202 sólo confirma el pedido.",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          requestBody: {
+            required: false,
+            content: json({
+              type: "object",
+              properties: { durationMs: { type: "integer", minimum: 1000, maximum: 60000 } },
+            }),
+          },
+          responses: {
+            "202": { description: "Grabación pedida al agent" },
+            "409": { description: "Sin agent conectado" },
+            "404": errorResponse,
+            "401": errorResponse,
+          },
+        },
+      },
       [API.stream("{id}")]: {
         get: {
           tags: ["Imágenes"],
@@ -363,7 +394,7 @@ function openapi(base: string) {
               properties: {
                 url: { type: "string", format: "uri", description: "http(s)://… que recibirá el POST" },
                 secret: { type: "string", minLength: 8, description: "Si se omite se genera uno" },
-                events: { type: "array", items: { type: "string", enum: ["motion"] }, default: ["motion"] },
+                events: { type: "array", items: { type: "string", enum: ["motion", "clip"] }, default: ["motion"] },
               },
             }),
           },
@@ -413,6 +444,7 @@ function page(base: string): string {
     row("GET", "/api/v1/cameras/:id/frame.jpg", "JWT o key", "Último fotograma en JPEG"),
     row("GET", "/api/v1/cameras/thumbnails", "JWT o key", "Miniaturas en Cloudinary"),
     row("POST", "/api/v1/cameras/:id/thumbnail", "JWT", "Generar miniatura ahora"),
+    row("POST", "/api/v1/cameras/:id/clip", "JWT", "Grabar clip MP4 del evento (F7)"),
     row("GET", "/api/v1/streams/:id.mjpg", "JWT o key", "Stream MJPEG continuo"),
     row("GET", "/api/v1/keys", "JWT", "Listar API keys"),
     row("POST", "/api/v1/keys", "JWT owner", "Crear API key (devuelve la clave una vez)"),
@@ -556,6 +588,29 @@ firma = "sha256=" + hex(hmac)          # compara en tiempo constante
 <code class="inline">WEBHOOK_RETRY_MS</code> (1000) de espera y <code class="inline">WEBHOOK_TIMEOUT_MS</code> (8000)
 de tiempo máximo. El estado de cada webhook sale en <code class="inline">GET /api/v1/webhooks</code>
 (<code class="inline">deliveries</code>, <code class="inline">failures</code>, <code class="inline">lastStatus</code>).</p>
+
+<h2>Clips (F7)</h2>
+<p>Cada aviso de movimiento arranca además la grabación de un <strong>clip MP4</strong> en el propio
+<em>agent</em> (<code class="inline">-c:v copy</code> sobre el RTSP, sin recodificar). El archivo vive en
+<code class="inline">data/clips/&lt;cámara&gt;/</code> (se conservan los <code class="inline">CLIP_KEEP</code>
+más recientes) y se sube a Cloudinary; por el WebSocket sólo viaja la URL. El clip se pega en el aviso
+que lo originó o, si no lo hay, se crea un evento <code class="inline">type=clip</code>:</p>
+<pre># Grabar a mano (15 s por defecto; 1..60 s con durationMs)
+curl -s -X POST "${base}/api/v1/cameras/$CAM/clip" \\
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \\
+  -d '{"durationMs": 20}' | jq
+
+# Ver los clips (los manuales salen con type=clip)
+curl -s "${base}/api/v1/events?type=clip&limit=5" -H "X-API-Key: $KEY" \\
+  | jq '.events[] | {at, type, clip}'</pre>
+<p class="note">Se puede apagar el arranque automático con
+<code class="inline">CLIP_ENABLED=false</code> (la petición manual sigue funcionando). La foto del aviso
+cubre el instante exacto: el clip empieza en el momento del aviso. Salud y contadores del servidor:
+<code class="inline">GET /api/health</code> → <code class="inline">clips</code>; en el agent,
+<code class="inline">GET :4100/api/clips</code>. Un webhook sólo recibe los tipos a los que se
+suscribió al crearlo (<code class="inline">events</code>, por defecto
+<code class="inline">["motion"]</code>): pasa <code class="inline">["motion","clip"]</code> si
+quieres los clips.</p>
 
 <h2>Límites de peticiones</h2>
 <p>Cada respuesta trae <code class="inline">X-RateLimit-Limit</code>, <code class="inline">X-RateLimit-Remaining</code>

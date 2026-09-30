@@ -22,10 +22,16 @@ export interface MotionManagerStatus {
 export class MotionManager {
   private watchers = new Map<string, MotionWatcher>();
   private emit: ((event: AgentEvent) => boolean) | null = null;
+  private clips: { record(cameraId: string, trigger: "motion" | "manual"): boolean } | null = null;
 
   /** Se inyecta cuando el transport al server ya existe. */
   setEmitter(emit: (event: AgentEvent) => boolean): void {
     this.emit = emit;
+  }
+
+  /** F7: cada aviso arranca también un clip (si `CLIP_ENABLED`). */
+  setClipRecorder(recorder: { record(cameraId: string, trigger: "motion" | "manual"): boolean }): void {
+    this.clips = recorder;
   }
 
   sync(cameras: AgentCamera[]): void {
@@ -84,5 +90,8 @@ export class MotionManager {
     console.log(`[motion] 🚨 ${cameraName} score=${detection.score.toFixed(3)} (${image})`);
 
     if (!this.emit?.(event)) console.warn(`[motion] aviso de ${cameraName} no enviado: sin conexión al server`);
+
+    // F7: el clip empieza aquí (la foto del evento cubre el instante exacto)
+    this.clips?.record(detection.cameraId, "motion");
   }
 }

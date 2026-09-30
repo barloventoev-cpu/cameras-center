@@ -17,6 +17,8 @@ export function App() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [offline, setOffline] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** F7: confirmación de una petición (grabar clip), distinta de un error. */
+  const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [live, setLive] = useState(true);
 
@@ -158,6 +160,28 @@ export function App() {
     setAuthed(false);
   }
 
+  /**
+   * F7: pide al agent que grabe un clip MP4. El server contesta 202 al momento
+   * y el clip llega a «Movimiento y webhooks» cuando el agent lo ha subido.
+   */
+  async function handleRecordClip(camera: Camera) {
+    setNotice(null);
+    try {
+      await api.events.record(camera.id);
+      setNotice(
+        `⏺ Grabación pedida a «${camera.name}»: el clip aparecerá en «Movimiento y webhooks» en unos segundos.`,
+      );
+      window.setTimeout(() => setNotice(null), 8000);
+    } catch (err) {
+      const status = (err as { status?: number }).status;
+      if (status === 401) {
+        setAuthed(false);
+        return;
+      }
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   return (
     <div className="app">
       <header className="topbar">
@@ -180,6 +204,7 @@ export function App() {
       </header>
 
       {error && <div className="error-banner">{error}</div>}
+      {notice && <div className="notice-banner">{notice}</div>}
 
       <h2 className="section-title">Añadir cámara</h2>
       <form className="card-panel form-grid" onSubmit={handleAdd}>
@@ -256,6 +281,17 @@ export function App() {
               }}
             >
               📸 Capturar
+            </button>
+            <button
+              className="ghost"
+              type="button"
+              title="Graba un clip MP4 en el agent y lo sube a Cloudinary (F7)"
+              onClick={(e) => {
+                e.stopPropagation();
+                void handleRecordClip(camera);
+              }}
+            >
+              ⏺ Clip
             </button>
             <button
               className="ghost"

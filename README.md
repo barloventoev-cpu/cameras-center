@@ -256,6 +256,58 @@ npm run test:motion                     # 32 checks con fuente sintética
 npm run test:f6                         # 75 comprobaciones end-to-end
 ```
 
+## Grabación de clips por eventos (F7)
+
+Con cada aviso de movimiento el agent arranca **otro FFmpeg propio** que graba
+unos segundos de esa cámara en un MP4, lo guarda en disco local y lo sube a
+Cloudinary. Por el WebSocket sólo viaja la **URL** (el socket limita cada
+mensaje a 2 MB).
+
+```
+aviso (F6) ──► FFmpeg -t N ──► data/clips/<cámara>/<ms>.mp4 ──► Cloudinary
+              (mp4 fragmentado)                                     │
+                                                     agent:clipReady (URL)
+server ──► ¿aviso de esa cámara ≤ 60 s?  ─sí─► payload.clip del aviso
+             └─no─► fila type='clip' ──► webhooks (si se suscribió) + UI
+```
+
+- **Codec**: `-c:v copy` sobre RTSP/ONVIF (el H.264 nativo no se recodifica) y
+  `libx264` para MJPEG/test, que no traen H.264. La duración va en `-t` para
+  que el proceso se muera solo; un temporizador extra lo mata si la sesión
+  RTSP se atasca (en F6 ya vimos el coste de los FFmpeg huérfanos).
+- **MP4 fragmentado** (`+frag_keyframe+empty_moov+default_base_moof`): es
+  reproducible aunque FFmpeg muera a mitad de la grabación.
+- **Disparo**: automático con cada aviso (`CLIP_ENABLED=false` lo apaga) o a
+  mano con `POST /api/v1/cameras/:id/clip` (JWT, cuerpo opcional
+  `{durationMs}` entre 1 s y 60 s → `202 Accepted`). Si no hay ningún agent
+  conectado responde `409`; el `202` sólo confirma el pedido.
+- **Ajustes** (`.env`, los lee el agent): `CLIP_ENABLED` (true),
+  `CLIP_DURATION_MS` (15000), `CLIP_MAX_MS` (60000) y `CLIP_KEEP` (20 clips
+  por cámara en disco; los más viejos se borran solos).
+- **Server**: `recordAgentClip` pega el clip en el aviso más reciente de esa
+  cámara si no tiene más de 60 s (**sin migración**: vive en `payload.clip`);
+  si no hay aviso (grabación manual) crea una fila `type='clip'`. Los dos
+  casos salen por `event:new` y en `GET /api/v1/events` con su campo `clip`;
+  contadores en `GET /api/health` → `clips`.
+- **Webhooks**: el evento `type='clip'` se envía sólo a quien se suscribió con
+  `events: ["motion","clip"]` (por defecto los webhooks son sólo `["motion"]`).
+- **UI**: la tarjeta del aviso reproduce el clip con `<video>` (póster: la foto
+  del aviso) y cada cámara tiene el botón **⏺ Clip** para grabar a mano.
+- **Mejora futura**: *pre-roll*, es decir, grabar también unos segundos ANTES
+  del aviso; exige un búfer continuo por cámara. Hoy la foto de F6 cubre el
+  instante exacto y el clip muestra lo que ocurre a partir de ahí.
+- **Salud**: `GET /api/health` → `clips` (server) y `GET :4100/api/clips`
+  (agent: grabaciones en marcha y estadísticas).
+
+```bash
+# Grabar un clip a mano (20 s) — el clip aparece en /api/v1/events
+curl -X POST http://localhost:4000/api/v1/cameras/<id>/clip \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"durationMs": 20}'
+
+npm run test:f7                         # 65 comprobaciones end-to-end
+```
+
 ## Comandos
 
 | Comando | Descripción |
@@ -276,6 +328,7 @@ npm run test:f6                         # 75 comprobaciones end-to-end
 | `npm run probe:motion` | F6: sonda de umbral contra la cámara real (`--test`: fuente sintética) |
 | `npm run test:motion` | F6: auto-prueba del detector con `testsrc` |
 | `npm run test:f6` | F6: movimiento, snapshots y webhooks end-to-end |
+| `npm run test:f7` | F7: grabación de clips (FFmpeg + Cloudinary) end-to-end |
 | `npm run test:ui` | Pruebas de interfaz con Chrome headless (capturas en `artifacts/ui`) |
 
 ## Roadmap
@@ -289,7 +342,7 @@ npm run test:f6                         # 75 comprobaciones end-to-end
 | **F4** | Descubrimiento ONVIF + health + thumbnails en Cloudinary | ✅ |
 | **F5** | API pública con API keys, docs y rate limits | ✅ |
 | **F6** | Detección de movimiento + snapshots + webhooks | ✅ |
-| **F7** | Grabación local de clips por eventos | ⬜ |
+| **F7** | Grabación local de clips por eventos | ✅ |
 
 ## Decisiones de diseño
 

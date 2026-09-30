@@ -9,9 +9,10 @@
  *   4. panel 🔑 API keys: crear → la clave se ve UNA vez → aparece en la
  *      lista → revocar (confirm) → queda como "revocada"
  *   5. panel 🚨 movimiento: aviso real con su foto + alta/baja de webhook
- *   6. panel Estado: API keys, límites, movimientos y enlace a /api/docs
- *   7. /api/docs carga a través del proxy de Vite
- *   8. sin errores sin capturar en la consola
+ *   6. F7: el clip del aviso se muestra como <video> y la tarjeta lleva ⏺ Clip
+ *   7. panel Estado: API keys, límites, movimientos y enlace a /api/docs
+ *   8. /api/docs carga a través del proxy de Vite
+ *   9. sin errores sin capturar en la consola
  *
  * Requiere: `npm run dev` (server + agent + web) y Chrome instalado.
  * Capturas: artifacts/ui/*.png (gitignored).
@@ -301,7 +302,35 @@ try {
   const cardText = (await eventCard.innerText().catch(() => "")).replace(/\s+/g, " ");
   check(/42%/.test(cardText), "la tarjeta muestra la puntuación", cardText.slice(0, 80));
   check(/O-KAM/.test(cardText), "…y el nombre de la cámara", cardText.slice(0, 80));
+  check(
+    await page.getByRole("button", { name: "⏺ Clip" }).first().isVisible().catch(() => false),
+    "botón ⏺ Clip presente en la tarjeta de cámara",
+  );
   await shot(page, "05-movimiento.png");
+
+  // --- F7: el clip del evento se muestra como vídeo ---------------------------
+  const CLIP_URL = "https://res.cloudinary.com/demo/video/upload/dog.mp4";
+  if (agentSocket.connected && uiEvent) {
+    agentSocket.emit("agent:clipReady", {
+      type: "agent:clipReady",
+      cameraId,
+      url: CLIP_URL,
+      durationMs: 15000,
+      bytes: 4096,
+      at: uiAt,
+      trigger: "motion",
+    });
+  }
+  // el panel refresca cada 15 s: se espera a su próxima pasada
+  let clipSrc = null;
+  for (let i = 0; i < 55 && !clipSrc; i += 1) {
+    await new Promise((r) => setTimeout(r, 400));
+    clipSrc = await eventCard.locator("video.event-clip").getAttribute("src").catch(() => null);
+  }
+  check(clipSrc === CLIP_URL, "el clip se muestra como vídeo en la tarjeta", String(clipSrc).slice(0, 70));
+  const cardAfterClip = (await eventCard.innerText().catch(() => "")).replace(/\s+/g, " ");
+  check(/🎬/.test(cardAfterClip), "…y la tarjeta marca el clip con 🎬", cardAfterClip.slice(0, 80));
+  await shot(page, "05b-clip.png");
 
   const hookUrl = `http://127.0.0.1:9/ui-${Date.now().toString(36)}`;
   await eventsPanel.getByPlaceholder("https://mi-app.ejemplo/hooks/camaras").fill(hookUrl);

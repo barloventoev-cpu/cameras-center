@@ -12,6 +12,7 @@ const BOUNDARY = "ffcamerasboundary";
  *   GET /snapshot/:id.jpg  último frame JPEG
  *   GET /api/status        estado de todos los pipelines
  *   GET /api/motion        F6: estado de la detección de movimiento
+ *   GET /api/clips         F7: clips grabados (estadísticas y archivos locales)
  *   GET /api/health        healthcheck
  *
  * Acceso directo desde la LAN (baja latencia). El acceso remoto pasa por el
@@ -21,6 +22,7 @@ export function createStreamServer(
   registry: PipelineRegistry,
   port: number,
   motionStatus?: () => unknown,
+  clipStatus?: () => unknown,
 ): http.Server {
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", `http://localhost:${port}`);
@@ -47,6 +49,11 @@ export function createStreamServer(
 
     if (url.pathname === "/api/motion") {
       json(res, 200, { motion: motionStatus?.() ?? { enabled: false, cameras: [] } }, cors);
+      return;
+    }
+
+    if (url.pathname === "/api/clips") {
+      json(res, 200, { clips: clipStatus?.() ?? { active: [], recorded: 0 } }, cors);
       return;
     }
 

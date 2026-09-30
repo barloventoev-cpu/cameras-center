@@ -2,6 +2,7 @@ import { io, type Socket } from "socket.io-client";
 import {
   CHANNELS,
   parseServerToAgentMessage,
+  type AgentClipReady,
   type AgentEvent,
   type AgentHello,
   type ServerToAgentMessage,
@@ -13,6 +14,8 @@ export interface ServerTransport {
   emitStatus: (report: unknown) => void;
   /** F6: envía un evento (movimiento) al server. Devuelve false si no hay conexión. */
   emitEvent: (event: AgentEvent) => boolean;
+  /** F7: envía la URL de un clip grabado y subido. */
+  emitClipReady: (clip: AgentClipReady) => boolean;
 }
 
 export interface ServerTransportHandlers {
@@ -22,6 +25,8 @@ export interface ServerTransportHandlers {
   onStopStream?: (cameraId: string, reason: string) => void;
   /** Al perder la conexión hay que soltar todo el relay. */
   onDisconnect?: () => void;
+  /** F7: el server pide un clip (disparo manual desde la API/UI). */
+  onRecordClip?: (cameraId: string, durationMs: number) => void;
 }
 
 /**
@@ -77,12 +82,24 @@ export function connectToServer(
     handlers.onStopStream?.(parsed.cameraId, parsed.reason);
   });
 
+  socket.on(CHANNELS.serverRecordClip, (raw) => {
+    const parsed = parseServerToAgentMessage(raw);
+    if (parsed.type !== "server:recordClip") return;
+    console.log(`[agent] recordClip ${parsed.cameraId} (${parsed.durationMs} ms)`);
+    handlers.onRecordClip?.(parsed.cameraId, parsed.durationMs);
+  });
+
   return {
     socket,
     emitStatus: (report) => socket.emit(CHANNELS.agentStatus, { type: "agent:status", report }),
     emitEvent: (event) => {
       if (!socket.connected) return false;
       socket.emit(CHANNELS.agentEvent, event);
+      return true;
+    },
+    emitClipReady: (clip) => {
+      if (!socket.connected) return false;
+      socket.emit(CHANNELS.agentClipReady, clip);
       return true;
     },
   };

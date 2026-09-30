@@ -2,6 +2,7 @@ import type { Server as HttpServer } from "node:http";
 import { Server, type Socket } from "socket.io";
 import {
   CHANNELS,
+  safeParseAgentClipReady,
   safeParseAgentEvent,
   safeParseFrameHeader,
   safeParseViewerMessage,
@@ -13,7 +14,7 @@ import { verifyApiKey } from "../keys";
 import { keyLimiter } from "../middleware/rateLimit";
 import { config } from "../config";
 import { captureThumb } from "../thumbs";
-import { recordAgentEvent, toSummary } from "../events";
+import { recordAgentClip, recordAgentEvent, toSummary } from "../events";
 import { frameCache } from "./frames";
 
 export interface StreamRequest {
@@ -43,6 +44,8 @@ export interface Gateway {
   broadcastStatus(cameraId: string, status: string): void;
   /** Resumen de conexiones (agentes conectados, espectadores por cámara). */
   stats(): GatewayStats;
+  /** F7: pide al agent que grabe un clip. false = no hay ningún agent. */
+  requestClip(cameraId: string, durationMs?: number): boolean;
   /** Espectador HTTP (endpoint MJPEG): pide/apaga el stream del agent. */
   acquire(cameraId: string): void;
   release(cameraId: string): void;
@@ -197,6 +200,21 @@ export function createGateway(httpServer: HttpServer): Gateway {
         .catch((error) => console.warn(`[gateway] error registrando evento: ${error instanceof Error ? error.message : error}`));
     });
 
+    // --- F7: el agent avisa de un clip grabado y subido -----------------------
+    socket.on(CHANNELS.agentClipReady, (raw: unknown) => {
+      if (socket.data.role !== "agent") return;
+      const parsed = safeParseAgentClipReady(raw);
+      if (!parsed.success) {
+        console.warn(`[gateway] agent:clipReady inválido: ${parsed.error.issues[0]?.message ?? ""}`);
+        return;
+      }
+      void recordAgentClip(parsed.data)
+        .then((stored) => {
+          if (stored) io.emit(CHANNELS.eventNew, { type: "event:new", event: toSummary(stored) });
+        })
+        .catch((error) => console.warn(`[gateway] error registrando clip: ${error instanceof Error ? error.message : error}`));
+    });
+
     // --- Plano de medios: agent -> server -> viewers ------------------------
     socket.on(CHANNELS.streamFrame, (rawHeader: unknown, rawPayload: unknown) => {
       if (socket.data.role !== "agent") return;
@@ -296,6 +314,16 @@ export function createGateway(httpServer: HttpServer): Gateway {
     release,
     onStreamRequest: (cb) => streamRequestCbs.push(cb),
     onStreamRelease: (cb) => streamReleaseCbs.push(cb),
+    // F7: si no hay agent conectado no se puede grabar (la ruta lo traduce a 409)
+    requestClip: (cameraId, durationMs) => {
+      if ((io.sockets.adapter.rooms.get(AGENT_ROOM)?.size ?? 0) === 0) return false;
+      io.to(AGENT_ROOM).emit(CHANNELS.serverRecordClip, {
+        type: "server:recordClip",
+        cameraId,
+        ...(durationMs ? { durationMs } : {}),
+      });
+      return true;
+    },
     broadcastStatus: (cameraId, status) => {
       io.to(cameraRoom(cameraId)).emit(CHANNELS.agentStatus, { report: { cameraId, status } });
     },

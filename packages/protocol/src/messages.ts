@@ -65,12 +65,35 @@ export const AgentEventSchema = z.object({
 });
 export type AgentEvent = z.infer<typeof AgentEventSchema>;
 
+/**
+ * F7: el agent terminó de grabar un clip y ya está subido.
+ * Viaja **sólo la URL** (el WebSocket limita los mensajes a 2 MB: un MP4 no
+ * cabe, y el archivo ya vive en disco y en Cloudinary).
+ */
+export const AgentClipReadySchema = z.object({
+  type: z.literal("agent:clipReady"),
+  cameraId: z.string().min(1),
+  /** URL pública del MP4 en Cloudinary. */
+  url: z.string().min(1),
+  /** Duración real grabada (ms). */
+  durationMs: z.number().int().nonnegative(),
+  /** Tamaño del archivo MP4 (bytes). */
+  bytes: z.number().int().nonnegative(),
+  /** Época (ms) en que empezó la grabación. */
+  at: z.number().int(),
+  /** Aviso de movimiento o petición manual desde la API/UI. */
+  trigger: z.enum(["motion", "manual"]).default("motion"),
+  agentId: z.string().optional(),
+});
+export type AgentClipReady = z.infer<typeof AgentClipReadySchema>;
+
 export const AgentMessageSchema = z.discriminatedUnion("type", [
   AgentHelloSchema,
   AgentStatusSchema,
   AgentThumbSchema,
   AgentErrorSchema,
   AgentEventSchema,
+  AgentClipReadySchema,
 ]);
 export type AgentMessage = z.infer<typeof AgentMessageSchema>;
 
@@ -101,10 +124,24 @@ export const ConfigSyncSchema = z.object({
 });
 export type ConfigSync = z.infer<typeof ConfigSyncSchema>;
 
+/**
+ * F7: el server pide al agent que grabe un clip (disparo manual desde la
+ * API/UI). El agent lo limita con su `CLIP_DURATION_MS` y contesta con
+ * `agent:clipReady` cuando el MP4 está subido.
+ */
+export const RecordClipSchema = z.object({
+  type: z.literal("server:recordClip"),
+  cameraId: z.string(),
+  /** Duración pedida (ms); el agent la recorta a `CLIP_MAX_MS`. */
+  durationMs: z.number().int().positive().default(15000),
+});
+export type RecordClip = z.infer<typeof RecordClipSchema>;
+
 export const ServerToAgentMessageSchema = z.discriminatedUnion("type", [
   StartStreamSchema,
   StopStreamSchema,
   ConfigSyncSchema,
+  RecordClipSchema,
 ]);
 export type ServerToAgentMessage = z.infer<typeof ServerToAgentMessageSchema>;
 
@@ -154,6 +191,8 @@ export const EventSummarySchema = z.object({
   at: z.number(),
   createdAt: z.string(),
   snapshot: z.string().nullable().default(null),
+  /** F7: URL del clip MP4 asociado (null si aún no lo hay). */
+  clip: z.string().nullable().default(null),
 });
 export type EventSummary = z.infer<typeof EventSummarySchema>;
 
@@ -173,6 +212,10 @@ export const CHANNELS = {
   agentThumb: "agent:thumb",
   /** F6: aviso de evento (movimiento) con la imagen en base64. */
   agentEvent: "agent:event",
+  /** F7: clip grabado y subido; sólo viaja la URL. */
+  agentClipReady: "agent:clipReady",
+  /** F7: el server pide al agent que grabe un clip. */
+  serverRecordClip: "server:recordClip",
   /** F6: el server avisa a la web de un evento nuevo. */
   eventNew: "event:new",
   serverStartStream: "server:startStream",
@@ -230,6 +273,18 @@ export function parseAgentEvent(raw: unknown): AgentEvent {
 
 export function safeParseAgentEvent(raw: unknown) {
   return AgentEventSchema.safeParse(raw);
+}
+
+export function parseAgentClipReady(raw: unknown): AgentClipReady {
+  return AgentClipReadySchema.parse(raw);
+}
+
+export function safeParseAgentClipReady(raw: unknown) {
+  return AgentClipReadySchema.safeParse(raw);
+}
+
+export function parseRecordClip(raw: unknown): RecordClip {
+  return RecordClipSchema.parse(raw);
 }
 
 // Los frames van por el plano binario: este header viaja como primer argumento

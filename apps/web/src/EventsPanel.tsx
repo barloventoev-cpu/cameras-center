@@ -107,19 +107,29 @@ export function EventsPanel({ onAuthLost }: { onAuthLost: () => void }) {
       <p className="hint" style={{ marginTop: 12 }}>
         El <em>agent</em> compara la escena con FFmpeg (<code>lavfi.scene_score</code>): al superar{" "}
         <code>MOTION_THRESHOLD</code> guarda la foto del momento en Cloudinary, la registra como evento y avisa a
-        cada webhook con firma HMAC-SHA256.
+        cada webhook con firma HMAC-SHA256. Además arranca un <strong>clip MP4</strong> (grabado en el{" "}
+        <em>agent</em> y subido a Cloudinary): aparece aquí en cuanto está listo.
       </p>
 
       {error && <div className="error-banner">{error}</div>}
 
-      <h3 style={{ margin: "18px 0 10px", fontSize: 14 }}>Últimos avisos</h3>
+      <h3 style={{ margin: "18px 0 10px", fontSize: 14 }}>Últimos avisos y clips</h3>
       {events.length === 0 ? (
         <p className="hint">Sin eventos todavía: pase algo delante de la cámara y aparecerá aquí.</p>
       ) : (
         <div className="event-grid">
           {events.map((item) => (
             <figure className="event-card" key={item.id}>
-              {item.snapshot ? (
+              {item.clip ? (
+                <video
+                  className="event-clip"
+                  src={item.clip}
+                  poster={item.snapshot ?? undefined}
+                  controls
+                  preload="metadata"
+                  playsInline
+                />
+              ) : item.snapshot ? (
                 <a href={item.snapshot} target="_blank" rel="noreferrer">
                   <img src={item.snapshot} alt={item.cameraName ?? item.cameraId} loading="lazy" />
                 </a>
@@ -130,6 +140,11 @@ export function EventsPanel({ onAuthLost }: { onAuthLost: () => void }) {
                 <strong>{item.cameraName ?? item.cameraId.slice(0, 8)}</strong>
                 <span className="muted">{new Date(item.at).toLocaleString()}</span>
                 {item.score !== null && <span className="event-score">{Math.round(item.score * 100)}%</span>}
+                {item.clip && (
+                  <span className="event-score" title="Clip grabado (F7)">
+                    🎬
+                  </span>
+                )}
               </figcaption>
               <button type="button" className="ghost" onClick={() => void handleRemoveEvent(item)}>
                 Borrar

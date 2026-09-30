@@ -101,11 +101,68 @@ export async function uploadJpeg(
   };
 }
 
-/** Borra un asset (útil para limpiar las pruebas de `npm run cloud:ping`). */
+/**
+ * F7: sube un MP4 (clip grabado por el agent).
+ *
+ * Mismo esquema que `uploadJpeg` —firma SHA-1 de los parámetros— pero contra el
+ * endpoint `/video/upload`, porque Cloudinary trata el vídeo como resource_type
+ * `video`. Cada clip lleva `public_id` único: los clips NO se sobrescriben.
+ */
+export async function uploadVideo(
+  video: Buffer,
+  creds: CloudinaryCreds,
+  options: { folder?: string; publicId?: string; timeoutMs?: number } = {},
+): Promise<CloudinaryUpload> {
+  const { folder, publicId, timeoutMs = 60000 } = options;
+
+  const timestamp = Math.floor(Date.now() / 1000);
+  const signed: Record<string, string | number> = { timestamp };
+  if (folder) signed.folder = folder;
+  if (publicId) signed.public_id = publicId;
+
+  const form = new URLSearchParams();
+  form.set("file", `data:video/mp4;base64,${video.toString("base64")}`);
+  form.set("api_key", creds.apiKey);
+  form.set("timestamp", String(timestamp));
+  form.set("signature", cloudinarySignature(signed, creds.apiSecret));
+  if (folder) form.set("folder", folder);
+  if (publicId) form.set("public_id", publicId);
+
+  const endpoint = `https://api.cloudinary.com/v1_1/${creds.cloud}/video/upload`;
+  const response = await fetch(endpoint, {
+    method: "POST",
+    body: form,
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+
+  const json = (await response.json().catch(() => ({}))) as CloudinaryApiResponse & {
+    duration?: number;
+  };
+  if (!response.ok) {
+    throw new Error(`Cloudinary video ${response.status}: ${json.error?.message ?? "fallo desconocido"}`);
+  }
+  if (!json.secure_url || !json.public_id) throw new Error("Cloudinary no devolvió secure_url");
+
+  return {
+    url: json.secure_url,
+    publicId: json.public_id,
+    bytes: json.bytes ?? video.byteLength,
+    format: json.format ?? "mp4",
+    width: json.width,
+    height: json.height,
+  };
+}
+
+/**
+ * Borra un asset (útil para limpiar las pruebas de `npm run cloud:ping`).
+ * `resourceType` hay que pasarlo a mano para vídeo: `image/destroy` no sirve
+ * para un MP4.
+ */
 export async function deleteAsset(
   creds: CloudinaryCreds,
   publicId: string,
   timeoutMs = 15000,
+  resourceType: "image" | "video" = "image",
 ): Promise<boolean> {
   const timestamp = Math.floor(Date.now() / 1000);
   const signature = cloudinarySignature({ public_id: publicId, timestamp }, creds.apiSecret);
@@ -115,7 +172,7 @@ export async function deleteAsset(
     timestamp: String(timestamp),
     signature,
   });
-  const response = await fetch(`https://api.cloudinary.com/v1_1/${creds.cloud}/image/destroy`, {
+  const response = await fetch(`https://api.cloudinary.com/v1_1/${creds.cloud}/${resourceType}/destroy`, {
     method: "POST",
     body: form,
     signal: AbortSignal.timeout(timeoutMs),
