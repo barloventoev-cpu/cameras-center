@@ -7,11 +7,13 @@ export interface SourceSpec {
   connection: string;
 }
 
-/** Salida común: JPEG secuencial por stdout, listo para `multipart/x-mixed-replace`. */
+/** Salida común: JPEG secuencial por stdout, listo para `multipart/x-mixed-replace`.
+ *  Tope de 640 px de ancho: cada fotograma pesa ~4× menos que a 1280 (menor
+ *  consumo de ancho de banda del server en Render y de los clientes). */
 const OUTPUT_ARGS = [
   "-an",
   "-vf",
-  "fps=6,scale='min(1280,iw)':-2",
+  "fps=6,scale='min(640,iw)':-2",
   "-q:v",
   "6",
   "-f",
