@@ -50,6 +50,6 @@ export function motionSettings(env: Record<string, string | undefined> = process
     sampleFps: int(env.MOTION_FPS, 2, 1),
     threshold: num(env.MOTION_THRESHOLD, 0.03, 0, 1),
     cooldownMs: int(env.MOTION_COOLDOWN_MS, 30_000, 1000),
-    snapshotWidth: int(env.MOTION_WIDTH, 1280, 64),
+    snapshotWidth: int(env.MOTION_WIDTH, 640, 64),
   };
 }
