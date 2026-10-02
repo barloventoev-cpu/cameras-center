@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { CreateCameraSchema, type Camera, type CreateCameraInput } from "@cameras/protocol";
 import { CameraGrid } from "@cameras/ui";
-import { api, getToken, setToken, type HealthResponse } from "./api";
+import { api, getToken, setToken, type HealthResponse, type StorageInfo } from "./api";
 import { AuthScreen } from "./AuthScreen";
 import { KeysPanel } from "./KeysPanel";
 import { EventsPanel } from "./EventsPanel";
@@ -16,6 +16,9 @@ export function App() {
   const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
   /** FPS configurados por cámara (pastilla de telemetría sobre el video). */
   const [encodings, setEncodings] = useState<Record<string, number>>({});
+  /** Uso de almacenamiento (panel + purga manual). */
+  const [storage, setStorage] = useState<StorageInfo | null>(null);
+  const [purging, setPurging] = useState(false);
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [offline, setOffline] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -99,11 +102,33 @@ export function App() {
       });
       setOffline(false);
       setError(null);
+      // Almacenamiento (no bloquea: si falla, la sección muestra "…")
+      void api
+        .storage()
+        .then(setStorage, () => setStorage(null));
     } catch (err) {
       setOffline(true);
       setError(err instanceof Error ? err.message : String(err));
     }
   }, []);
+
+  const handlePurge = () => {
+    setPurging(true);
+    setNotice(null);
+    api
+      .purgeStorage()
+      .then(
+        (res) => {
+          setNotice(
+            `Purga completa: ${res.purge.events} eventos y ${res.purge.assets} assets borrados` +
+              (res.purge.assetFailures > 0 ? ` (${res.purge.assetFailures} fallos, se reintentan)` : "."),
+          );
+          void refresh();
+        },
+        (err) => setError(err instanceof Error ? err.message : String(err)),
+      )
+      .finally(() => setPurging(false));
+  };
 
   useEffect(() => {
     if (!authed) return;
@@ -388,6 +413,74 @@ export function App() {
           Las URLs de conexión se guardan cifradas con AES-256-GCM y jamás se devuelven en la API:
           sólo el <code>agent</code> las recibe para alimentar a FFmpeg.
         </p>
+      </div>
+
+      <h2 className="section-title">Almacenamiento</h2>
+      <div className="card-panel hint">
+        {(() => {
+          const cloud = storage?.cloudinary;
+          const used = cloud?.configured ? cloud.storageUsedBytes : 0;
+          const limit = cloud?.configured ? cloud.storageLimitBytes : 0;
+          const pct = limit > 0 ? Math.min(100, (used / limit) * 100) : 0;
+          const gb = (b: number) =>
+            b >= 1_073_741_824 ? `${(b / 1_073_741_824).toFixed(2)} GB` : `${(b / 1_048_576).toFixed(1)} MB`;
+          return (
+            <>
+              <p style={{ marginTop: 0 }}>
+                <strong>Cloudinary{storage?.cloudinary?.configured && storage.cloudinary.plan ? ` (${storage.cloudinary.plan})` : ""}:</strong>{" "}
+                {!storage
+                  ? "…"
+                  : !cloud?.configured
+                    ? "sin configurar (CLOUDINARY_URL)"
+                    : `${gb(used)} de ${limit > 0 ? gb(limit) : "límite desconocido"}`}
+              </p>
+              {storage && cloud?.configured && limit > 0 && (
+                <div style={{ background: "#242833", borderRadius: 999, height: 8, overflow: "hidden", margin: "6px 0 10px" }}>
+                  <div
+                    style={{
+                      width: `${pct}%`,
+                      height: "100%",
+                      background: pct > 85 ? "#e63946" : pct > 60 ? "#e8a13d" : "#2ba89d",
+                    }}
+                  />
+                </div>
+              )}
+              <p>
+                <strong>Eventos:</strong>{" "}
+                {!storage
+                  ? "…"
+                  : `${storage.events.total} filas (${storage.events.motion} motion · ${storage.events.clips} clips)`}{" "}
+                · <strong>Disco del agent:</strong>{" "}
+                {!storage
+                  ? "…"
+                  : storage.agent.at > 0
+                    ? `${gb(storage.agent.clipsBytes)} en ${storage.agent.clips} MP4 locales`
+                    : "sin reporte (el agent informa cada 60 s)"}
+              </p>
+              <p style={{ marginBottom: 0 }}>
+                <strong>Retención:</strong>{" "}
+                {!storage
+                  ? "…"
+                  : storage.retention.enabled
+                    ? `${storage.retention.daysEvents} días de eventos / ${storage.retention.daysAssets} días de fotos y MP4` +
+                      (storage.retention.lastRun
+                        ? ` · última pasada: ${storage.retention.lastDeletedEvents} eventos y ${storage.retention.lastDeletedAssets} assets` +
+                          (storage.retention.lastFailures > 0 ? ` (${storage.retention.lastFailures} fallos)` : "")
+                        : " · aún sin pasadas")
+                    : "desactivada (RETENTION_ENABLED=false)"}{" "}
+                <button
+                  className="ghost"
+                  type="button"
+                  onClick={handlePurge}
+                  disabled={purging}
+                  style={{ marginLeft: 8 }}
+                >
+                  {purging ? "Purgando…" : "Purgar ahora"}
+                </button>
+              </p>
+            </>
+          );
+        })()}
       </div>
     </div>
   );

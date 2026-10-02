@@ -87,6 +87,21 @@ export const AgentClipReadySchema = z.object({
 });
 export type AgentClipReady = z.infer<typeof AgentClipReadySchema>;
 
+/**
+ * Uso de disco local del agent (para el panel de almacenamiento): cuánto
+ * ocupan los MP4 en `AGENT_DATA_DIR/clips`. Se emite cada ~60 s.
+ */
+export const AgentDiskSchema = z.object({
+  type: z.literal("agent:disk"),
+  agentId: z.string().optional(),
+  /** Bytes en clips locales. */
+  clipsBytes: z.number().int().nonnegative(),
+  /** Archivos MP4 locales. */
+  clips: z.number().int().nonnegative(),
+  at: z.number().int(),
+});
+export type AgentDisk = z.infer<typeof AgentDiskSchema>;
+
 export const AgentMessageSchema = z.discriminatedUnion("type", [
   AgentHelloSchema,
   AgentStatusSchema,
@@ -94,6 +109,7 @@ export const AgentMessageSchema = z.discriminatedUnion("type", [
   AgentErrorSchema,
   AgentEventSchema,
   AgentClipReadySchema,
+  AgentDiskSchema,
 ]);
 export type AgentMessage = z.infer<typeof AgentMessageSchema>;
 
@@ -234,6 +250,8 @@ export const CHANNELS = {
   agentEvent: "agent:event",
   /** F7: clip grabado y subido; sólo viaja la URL. */
   agentClipReady: "agent:clipReady",
+  /** Uso de disco local del agent (panel de almacenamiento). */
+  agentDisk: "agent:disk",
   /** F7: el server pide al agent que grabe un clip. */
   serverRecordClip: "server:recordClip",
   /** F6: el server avisa a la web de un evento nuevo. */

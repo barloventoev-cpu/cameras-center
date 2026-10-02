@@ -6,7 +6,7 @@ import { createStreamServer } from "./local/streamServer";
 import { connectToServer, type ServerTransport } from "./transport/server";
 import { RelayController } from "./relay";
 import { MotionManager } from "./motionManager";
-import { ClipManager } from "./clip";
+import { ClipManager, measureClipsDir } from "./clip";
 import { clipSettings, motionSettings } from "@cameras/core";
 import type { AgentHello } from "@cameras/protocol";
 
@@ -127,11 +127,23 @@ async function main() {
       transport.emitStatus(pipeline.reportStatus());
     }
   }, 10000);
+  // Uso de disco local para el panel de almacenamiento (cada 60 s).
+  const diskTimer = setInterval(() => {
+    const usage = measureClipsDir(config.dataDir);
+    transport.emitDisk({
+      type: "agent:disk",
+      agentId: config.agentId,
+      clipsBytes: usage.clipsBytes,
+      clips: usage.clips,
+      at: Date.now(),
+    });
+  }, 60_000);
 
   const shutdown = () => {
     console.log("\n[agent] apagando...");
     clearInterval(syncTimer);
     clearInterval(statusTimer);
+    clearInterval(diskTimer);
     relay.detachAll("shutdown");
     motion.stopAll();
     clips.stopAll();

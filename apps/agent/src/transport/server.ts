@@ -3,6 +3,7 @@ import {
   CHANNELS,
   parseServerToAgentMessage,
   type AgentClipReady,
+  type AgentDisk,
   type AgentEvent,
   type AgentHello,
   type ServerToAgentMessage,
@@ -16,6 +17,8 @@ export interface ServerTransport {
   emitEvent: (event: AgentEvent) => boolean;
   /** F7: envía la URL de un clip grabado y subido. */
   emitClipReady: (clip: AgentClipReady) => boolean;
+  /** Uso de disco local (panel de almacenamiento). */
+  emitDisk: (disk: AgentDisk) => void;
 }
 
 export interface ServerTransportHandlers {
@@ -110,6 +113,9 @@ export function connectToServer(
       if (!socket.connected) return false;
       socket.emit(CHANNELS.agentClipReady, clip);
       return true;
+    },
+    emitDisk: (disk) => {
+      socket.emit(CHANNELS.agentDisk, disk);
     },
   };
 }

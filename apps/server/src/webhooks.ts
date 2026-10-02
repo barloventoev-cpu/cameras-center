@@ -6,14 +6,18 @@ import {
   WEBHOOK_SIGNATURE_HEADER,
   WEBHOOK_TIMESTAMP_HEADER,
 } from "@cameras/core";
+import { protectConnection, revealConnection } from "./store";
+import { hasSupabase } from "./config";
 
 /**
  * F6 — webhooks: el server avisa a otras apps cuando ocurre un evento.
  *
- * El registro vive en memoria (se siembra con `WEBHOOK_URL`/`WEBHOOK_SECRET`
- * en .env y se gestiona con `POST/DELETE /api/v1/webhooks`). Cada envío lleva
- * HMAC-SHA256 firmado con el secreto del webhook para que el receptor pueda
- * comprobar que viene de Cameras Center y no ha sido manipulado.
+ * El registro vive en memoria y se persiste en Supabase (tabla `webhooks`,
+ * migración `0002_webhooks.sql`) para sobrevivir reinicios: al arrancar se
+ * siembra con `WEBHOOK_URL`/`WEBHOOK_SECRET` y se cargan los guardados. Sin
+ * Supabase (o sin la tabla) todo sigue funcionando en memoria como antes.
+ * El secreto se guarda cifrado con `CAMERA_ENC_KEY` (igual que las URLs de
+ * cámara) y sólo se revela al firmar cada envío; la API nunca lo devuelve.
  *
  *   POST <url>
  *   x-cameras-event:    motion
@@ -113,16 +117,94 @@ export function createWebhook(input: { url: string; secret?: string; events?: st
   const secret = (input.secret ?? "").trim() || newWebhookSecret();
   const record = createRecord(url, secret, input.events);
   records.push(record);
+  void persistWebhook(record).catch(() => undefined);
   console.log(`[webhooks] + ${record.id.slice(0, 8)} → ${url}`);
   return { webhook: toView(record), secret };
 }
 
-export function removeWebhook(id: string): boolean {
+export async function removeWebhook(id: string): Promise<boolean> {
   const index = records.findIndex((record) => record.id === id);
   if (index === -1) return false;
   const [removed] = records.splice(index, 1);
+  if (hasSupabase) {
+    try {
+      const { getSupabase } = await import("./db/supabase");
+      const { error } = await getSupabase().from("webhooks").delete().eq("id", id);
+      if (error) throw new Error(error.message);
+    } catch (error) {
+      console.warn("[webhooks] no se pudo borrar en Supabase:", error instanceof Error ? error.message : error);
+    }
+  }
   console.log(`[webhooks] − ${id.slice(0, 8)} → ${removed?.url ?? ""}`);
   return true;
+}
+
+/**
+ * Carga los webhooks guardados en Supabase (tras sembrar los de .env; las
+ * URLs duplicadas no se repiten). Sin Supabase o sin la tabla se sigue sólo
+ * con memoria (ver `supabase/migrations/0002_webhooks.sql`).
+ */
+export async function loadPersistedWebhooks(): Promise<number> {
+  if (!hasSupabase) return 0;
+  try {
+    const { getSupabase } = await import("./db/supabase");
+    const { data, error } = await getSupabase()
+      .from("webhooks")
+      .select("id, url, secret, events, active, created_at")
+      .eq("active", true)
+      .order("created_at", { ascending: true });
+    if (error) throw new Error(error.message);
+    let loaded = 0;
+    for (const row of (data ?? []) as Array<{
+      id: string;
+      url: string;
+      secret: string;
+      events?: string[] | null;
+      active?: boolean | null;
+      created_at?: string | null;
+    }>) {
+      if (!row?.url || records.some((r) => r.url === row.url)) continue;
+      records.push({
+        id: row.id,
+        url: row.url,
+        secret: row.secret,
+        events: Array.isArray(row.events) && row.events.length > 0 ? row.events : ["motion"],
+        active: row.active !== false,
+        createdAt: row.created_at ?? new Date().toISOString(),
+        deliveries: 0,
+        failures: 0,
+        lastStatus: null,
+        lastAt: null,
+        lastError: null,
+      });
+      loaded += 1;
+    }
+    if (loaded > 0) console.log(`[webhooks] ✅ ${loaded} webhook(s) recuperados de Supabase`);
+    return loaded;
+  } catch (error) {
+    console.warn("[webhooks] sin persistencia (falta la tabla webhooks?):", error instanceof Error ? error.message : error);
+    return 0;
+  }
+}
+
+async function persistWebhook(record: WebhookRecord): Promise<void> {
+  if (!hasSupabase) return;
+  try {
+    const { getSupabase } = await import("./db/supabase");
+    const { error } = await getSupabase().from("webhooks").upsert(
+      {
+        id: record.id,
+        url: record.url,
+        secret: record.secret,
+        events: record.events,
+        active: record.active,
+      },
+      { onConflict: "id" }
+    );
+    if (error) throw new Error(error.message);
+  } catch (error) {
+    console.warn("[webhooks] no se pudo guardar en Supabase:", error instanceof Error ? error.message : error);
+  }
 }
 
 /** Envía el evento a todos los webhooks activos suscritos a su tipo. */
@@ -147,12 +229,21 @@ export async function deliverWebhooks(payload: WebhookPayload): Promise<{ attemp
 
 async function deliver(record: WebhookRecord, body: string, eventType: string, deliveryId: string): Promise<boolean> {
   const timestamp = Math.floor(Date.now() / 1000);
+  let secret: string;
+  try {
+    secret = revealConnection(record.secret);
+  } catch (error) {
+    record.lastError = error instanceof Error ? error.message : String(error);
+    record.failures += 1;
+    webhookStats.failures += 1;
+    return false;
+  }
   const headers: Record<string, string> = {
     "content-type": "application/json",
     "user-agent": "cameras-center/0.1.0",
     [WEBHOOK_EVENT_HEADER]: eventType,
     [WEBHOOK_TIMESTAMP_HEADER]: String(timestamp),
-    [WEBHOOK_SIGNATURE_HEADER]: signWebhook(record.secret, timestamp, body),
+    [WEBHOOK_SIGNATURE_HEADER]: signWebhook(secret, timestamp, body),
     "x-cameras-delivery": deliveryId,
   };
 
@@ -199,7 +290,8 @@ function createRecord(url: string, secret: string, events?: string[]): WebhookRe
   return {
     id: randomUUID(),
     url,
-    secret,
+    // En reposo va cifrado (igual que las URLs de cámara); se revela al firmar.
+    secret: protectConnection(secret),
     events: events && events.length > 0 ? events : ["motion"],
     active: true,
     createdAt: new Date().toISOString(),

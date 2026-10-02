@@ -180,3 +180,40 @@ export async function deleteAsset(
   const json = (await response.json().catch(() => ({}))) as { result?: string };
   return json.result === "ok";
 }
+
+export interface CloudinaryUsage {
+  plan: string | null;
+  storageUsedBytes: number;
+  storageLimitBytes: number;
+}
+
+/**
+ * Uso de la cuenta (para el panel de almacenamiento). Requiere el plan con
+ * Admin API (el gratuito la incluye): `GET /usage` con Basic Auth.
+ * Los campos que falten se devuelven en 0 (nunca lanza).
+ */
+export async function cloudinaryUsage(
+  creds: CloudinaryCreds,
+  timeoutMs = 15000,
+): Promise<CloudinaryUsage> {
+  const fallback = { plan: null, storageUsedBytes: 0, storageLimitBytes: 0 };
+  try {
+    const auth = Buffer.from(`${creds.apiKey}:${creds.apiSecret}`).toString("base64");
+    const response = await fetch(`https://api.cloudinary.com/v1_1/${creds.cloud}/usage`, {
+      headers: { Authorization: `Basic ${auth}` },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!response.ok) return fallback;
+    const json = (await response.json().catch(() => ({}))) as {
+      plan?: string;
+      storage?: { usage?: number; limit?: number };
+    };
+    return {
+      plan: typeof json.plan === "string" ? json.plan : null,
+      storageUsedBytes: Number(json.storage?.usage ?? 0) || 0,
+      storageLimitBytes: Number(json.storage?.limit ?? 0) || 0,
+    };
+  } catch {
+    return fallback;
+  }
+}

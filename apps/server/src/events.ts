@@ -260,6 +260,85 @@ export async function removeEvent(id: string): Promise<boolean> {
   return index !== -1;
 }
 
+export interface PurgeCandidate {
+  id: string;
+  snapshot: string | null;
+  clip: string | null;
+}
+
+/**
+ * Eventos viejos (motion/clip) para la purga de retención, del más antiguo
+ * al más nuevo. Las miniaturas F4 (una por cámara) nunca se tocan.
+ */
+export async function listEventsForPurge(
+  beforeIso: string,
+  limit: number,
+  offset: number
+): Promise<PurgeCandidate[]> {
+  if (hasSupabase) {
+    try {
+      const { getSupabase } = await import("./db/supabase");
+      const { data, error } = await getSupabase()
+        .from("events")
+        .select("id, thumbnail_url, payload")
+        .in("type", ["motion", "clip"])
+        .lt("created_at", beforeIso)
+        .order("created_at", { ascending: true })
+        .range(offset, offset + limit - 1);
+      if (error) throw new Error(error.message);
+      return (data ?? []).map((row) => {
+        const r = row as { id: string; thumbnail_url?: string | null; payload?: { clip?: { url?: unknown } } | null };
+        const clipUrl = r.payload?.clip && typeof r.payload.clip.url === "string" ? r.payload.clip.url : null;
+        return { id: r.id, snapshot: r.thumbnail_url ?? null, clip: clipUrl };
+      });
+    } catch (error) {
+      console.warn("[events] no se pudo listar para purga:", error instanceof Error ? error.message : error);
+      return [];
+    }
+  }
+  return memoryEvents
+    .filter((e) => (e.type === "motion" || e.type === "clip") && e.createdAt < beforeIso)
+    .sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0))
+    .slice(offset, offset + limit)
+    .map((e) => ({ id: e.id, snapshot: e.snapshot, clip: e.clip ?? null }));
+}
+
+/** Borra filas por id (en lotes). Devuelve cuántas se borraron. */
+export async function deleteEventsByIds(ids: string[]): Promise<number> {
+  if (ids.length === 0) return 0;
+  const dropMemory = () => {
+    let n = 0;
+    for (const id of ids) {
+      const idx = memoryEvents.findIndex((e) => e.id === id);
+      if (idx !== -1) {
+        memoryEvents.splice(idx, 1);
+        n += 1;
+      }
+    }
+    return n;
+  };
+  if (hasSupabase) {
+    try {
+      const { getSupabase } = await import("./db/supabase");
+      let deleted = 0;
+      for (let i = 0; i < ids.length; i += 500) {
+        const { error, count } = await getSupabase()
+          .from("events")
+          .delete({ count: "exact" })
+          .in("id", ids.slice(i, i + 500));
+        if (error) throw new Error(error.message);
+        deleted += count ?? 0;
+      }
+      dropMemory();
+      return deleted;
+    } catch (error) {
+      console.warn("[events] no se pudo purgar:", error instanceof Error ? error.message : error);
+      return 0;
+    }
+  }
+  return dropMemory();
+}
+
 export async function eventCount(type = EVENT_TYPE): Promise<number> {
   if (hasSupabase) {
     try {

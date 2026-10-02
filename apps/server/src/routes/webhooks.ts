@@ -55,12 +55,16 @@ webhooksRouter.post("/", requireAuth, (req, res) => {
   }
 });
 
-webhooksRouter.delete("/:id", requireAuth, (req, res) => {
+webhooksRouter.delete("/:id", requireAuth, async (req, res) => {
   if (res.locals.userRole !== "owner") {
     return res.status(403).json({ error: "Sólo el usuario owner puede borrar webhooks" });
   }
   const id = req.params.id;
   if (!id) return res.status(400).json({ error: "Falta el id" });
-  if (!removeWebhook(id)) return res.status(404).json({ error: "Webhook no encontrado" });
+  try {
+    if (!(await removeWebhook(id))) return res.status(404).json({ error: "Webhook no encontrado" });
+  } catch (error) {
+    return handleError(res, error, "delete");
+  }
   res.status(204).end();
 });

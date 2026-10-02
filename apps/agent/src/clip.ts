@@ -66,6 +66,42 @@ export function buildClipArgs(spec: SourceSpec, file: string, durationMs: number
   ];
 }
 
+/**
+ * Uso de disco de los clips locales (para el panel de almacenamiento):
+ * recorre `dataDir/clips` sumando los MP4. Síncrono y barato (pocas decenas
+ * de archivos por el `CLIP_KEEP`); tolera carreras con la poda.
+ */
+export function measureClipsDir(dataDir: string): { clipsBytes: number; clips: number } {
+  const out = { clipsBytes: 0, clips: 0 };
+  try {
+    const root = path.resolve(dataDir, "clips");
+    for (const cam of readdirSync(root)) {
+      let dirStat;
+      try {
+        dirStat = statSync(path.join(root, cam));
+      } catch {
+        continue;
+      }
+      if (!dirStat.isDirectory()) continue;
+      for (const file of readdirSync(path.join(root, cam))) {
+        if (!file.endsWith(".mp4")) continue;
+        try {
+          const st = statSync(path.join(root, cam, file));
+          if (st.isFile()) {
+            out.clipsBytes += st.size;
+            out.clips += 1;
+          }
+        } catch {
+          // carrera con la poda: se ignora
+        }
+      }
+    }
+  } catch {
+    // sin disco o sin carpeta: 0
+  }
+  return out;
+}
+
 export class ClipManager {
   private specs = new Map<string, SourceSpec>();
   private active = new Map<string, ActiveClip>();

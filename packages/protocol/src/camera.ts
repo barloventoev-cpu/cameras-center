@@ -78,6 +78,8 @@ export const API = {
   event: (id: string) => `/api/v1/events/${id}`,
   webhooks: "/api/v1/webhooks",
   webhook: (id: string) => `/api/v1/webhooks/${id}`,
+  /** Almacenamiento: uso de Cloudinary/disco/eventos + purga manual. */
+  storage: "/api/v1/storage",
   /** F5: documentación pública */
   docs: "/api/docs",
   openapi: "/api/openapi.json",

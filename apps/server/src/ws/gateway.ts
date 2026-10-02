@@ -64,6 +64,14 @@ const cameraRoom = (cameraId: string) => `cam:${cameraId}`;
 /** Última codificación (resolución/FPS) reportada por el agent por cámara. */
 const lastEncodings = new Map<string, { width: number; fps: number }>();
 
+/** Último uso de disco reportado por el agent (panel de almacenamiento). */
+export const agentDisk = {
+  agentId: null as string | null,
+  clipsBytes: 0,
+  clips: 0,
+  at: 0,
+};
+
 /** Frames enviados a un espectador que aún no ha confirmado (antimancha). */
 const MAX_INFLIGHT = 4;
 /** Si un espectador no confirma en este tiempo, se le vuelve a permitir. */
@@ -196,6 +204,16 @@ export function createGateway(httpServer: HttpServer): Gateway {
           lastEncodings.set(payload.report.cameraId, { width: enc.width, fps: enc.fps });
         }
       }
+    });
+
+    socket.on(CHANNELS.agentDisk, (payload) => {
+      if (socket.data.role !== "agent") return;
+      const d = (payload ?? {}) as { agentId?: unknown; clipsBytes?: unknown; clips?: unknown; at?: unknown };
+      if (typeof d.clipsBytes !== "number" || typeof d.clips !== "number") return;
+      agentDisk.agentId = typeof d.agentId === "string" ? d.agentId : (socket.data.agentId ?? null);
+      agentDisk.clipsBytes = Math.max(0, Math.floor(d.clipsBytes));
+      agentDisk.clips = Math.max(0, Math.floor(d.clips));
+      agentDisk.at = typeof d.at === "number" ? d.at : Date.now();
     });
 
     // --- F6: el agent avisa de un evento (movimiento) ------------------------

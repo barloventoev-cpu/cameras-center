@@ -138,6 +138,24 @@ export interface MotionEvent {
   clip: string | null;
 }
 
+/** Panel de almacenamiento (`GET /api/v1/storage`). */
+export interface StorageInfo {
+  cloudinary:
+    | { configured: false }
+    | { configured: true; plan: string | null; storageUsedBytes: number; storageLimitBytes: number };
+  events: { motion: number; clips: number; thumbnails: number; total: number };
+  agent: { agentId: string | null; clipsBytes: number; clips: number; at: number };
+  retention: {
+    enabled: boolean;
+    daysEvents: number;
+    daysAssets: number;
+    lastRun: string | null;
+    lastDeletedEvents: number;
+    lastDeletedAssets: number;
+    lastFailures: number;
+  };
+}
+
 /** F6: webhook registrado (el secreto sólo se ve al crearlo). */
 export interface WebhookInfo {
   id: string;
@@ -190,6 +208,18 @@ export const api = {
   /** Codificación configurada (resolución/FPS) para la pastilla de telemetría. */
   cameraEncoding: async (id: string): Promise<{ cameraId: string; width: number; fps: number }> => {
     return request<{ cameraId: string; width: number; fps: number }>(`${API.camera(id)}/encoding`);
+  },
+
+  /** Uso de almacenamiento (Cloudinary, eventos, disco del agent, retención). */
+  storage: async (): Promise<StorageInfo> => {
+    return request<StorageInfo>(API.storage);
+  },
+
+  /** Ejecuta la purga de retención ahora (sólo owner). */
+  purgeStorage: async (): Promise<{ purge: { events: number; assets: number; assetFailures: number } }> => {
+    return request<{ purge: { events: number; assets: number; assetFailures: number } }>(`${API.storage}/purge`, {
+      method: "POST",
+    });
   },
 
   /** F4: captura y sube un thumbnail ahora. Devuelve su URL o lanza ApiError. */
