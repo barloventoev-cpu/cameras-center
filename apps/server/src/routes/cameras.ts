@@ -291,7 +291,7 @@ camerasRouter.get("/:id/encoding", requirePrincipal, principalRateLimit, async (
       cameraId: id,
       width,
       fps,
-      agentConnected: (gateway?.stats().agents ?? 0) > 0,
+      agentConnected: (gateway?.stats()?.agents ?? 0) > 0,
       custom: width !== 640 || fps !== 2,
     });
   } catch (error) {

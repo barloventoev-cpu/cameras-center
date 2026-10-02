@@ -80,7 +80,13 @@ export function App() {
         cameraList.map((c) =>
           api.cameraEncoding(c.id).then(
             (enc) => ({ id: c.id, fps: enc.fps }),
-            () => null,
+            (err) => {
+              // Sesión vencida: se fuerza el re-login (los demás endpoints ya
+              // hacen lo mismo); otro error queda en consola para diagnóstico.
+              if ((err as { status?: number })?.status === 401) setAuthed(false);
+              else console.warn(`[cámaras] sin fps para ${c.id}:`, err instanceof Error ? err.message : err);
+              return null;
+            },
           ),
         ),
       ).then((results) => {
