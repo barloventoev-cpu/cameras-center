@@ -79,7 +79,10 @@ export function App() {
       void Promise.all(
         cameraList.map((c) =>
           api.cameraEncoding(c.id).then(
-            (enc) => ({ id: c.id, fps: enc.fps }),
+            (enc) => {
+              console.info(`[cámaras] fps ${c.id}: ${enc?.fps}`);
+              return { id: c.id, fps: enc?.fps };
+            },
             (err) => {
               // Sesión vencida: se fuerza el re-login (los demás endpoints ya
               // hacen lo mismo); otro error queda en consola para diagnóstico.
