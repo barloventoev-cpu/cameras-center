@@ -10,7 +10,7 @@ export const CameraSourceTypeSchema = z.enum([
 ]);
 export type CameraSourceType = z.infer<typeof CameraSourceTypeSchema>;
 
-export const CameraStatusSchema = z.enum(["unknown", "starting", "online", "offline", "error"]);
+export const CameraStatusSchema = z.enum(["unknown", "starting", "online", "offline", "error", "paused"]);
 export type CameraStatus = z.infer<typeof CameraStatusSchema>;
 
 /**

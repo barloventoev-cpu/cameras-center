@@ -187,6 +187,10 @@ export const api = {
     const data = await request<{ thumbnails: Record<string, string> }>(`${API.cameras}/thumbnails`);
     return data.thumbnails ?? {};
   },
+  /** Codificación configurada (resolución/FPS) para la pastilla de telemetría. */
+  cameraEncoding: async (id: string): Promise<{ cameraId: string; width: number; fps: number }> => {
+    return request<{ cameraId: string; width: number; fps: number }>(`${API.camera(id)}/encoding`);
+  },
 
   /** F4: captura y sube un thumbnail ahora. Devuelve su URL o lanza ApiError. */
   captureThumbnail: async (id: string): Promise<string> => {

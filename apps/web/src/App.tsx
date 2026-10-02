@@ -14,6 +14,8 @@ export function App() {
   const [authed, setAuthed] = useState(() => Boolean(getToken()));
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
+  /** FPS configurados por cámara (pastilla de telemetría sobre el video). */
+  const [encodings, setEncodings] = useState<Record<string, number>>({});
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [offline, setOffline] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -73,6 +75,19 @@ export function App() {
       setHealth(healthData);
       setCameras(cameraList);
       setThumbnails(thumbList);
+      // FPS configurados (no bloquean: si fallan, la pastilla muestra resolución)
+      void Promise.all(
+        cameraList.map((c) =>
+          api.cameraEncoding(c.id).then(
+            (enc) => ({ id: c.id, fps: enc.fps }),
+            () => null,
+          ),
+        ),
+      ).then((results) => {
+        const map: Record<string, number> = {};
+        for (const r of results) if (r && typeof r.fps === "number") map[r.id] = r.fps;
+        setEncodings(map);
+      });
       setOffline(false);
       setError(null);
     } catch (err) {
@@ -257,6 +272,7 @@ export function App() {
         cameras={cameras}
         streamUrls={streamUrls}
         thumbnails={thumbnails}
+        encodingFps={encodings}
         onStreamError={handleStreamError}
         actions={(camera) => (
           <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>

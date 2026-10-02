@@ -2,10 +2,11 @@ import type { CameraStatus } from "@cameras/protocol";
 
 const LABELS: Record<CameraStatus, string> = {
   unknown: "Sin datos",
-  starting: "Iniciando",
-  online: "En línea",
+  starting: "Conectando…",
+  online: "En vivo",
   offline: "Sin señal",
   error: "Error",
+  paused: "En pausa",
 };
 
 const COLORS: Record<CameraStatus, { bg: string; fg: string }> = {
@@ -14,6 +15,7 @@ const COLORS: Record<CameraStatus, { bg: string; fg: string }> = {
   online: { bg: "#12351f", fg: "#5dde8a" },
   offline: { bg: "#3a2020", fg: "#ff8a8a" },
   error: { bg: "#4a1f2b", fg: "#ff7aa8" },
+  paused: { bg: "#1e2a4a", fg: "#9db8ff" },
 };
 
 export interface StatusBadgeProps {

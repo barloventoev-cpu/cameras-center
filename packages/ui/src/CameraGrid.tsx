@@ -15,6 +15,8 @@ export interface CameraGridProps {
   actions?: (camera: Camera) => ReactNode;
   /** El stream directo (LAN) falló: el padre debe cambiar a relay por WS. */
   onStreamError?: (cameraId: string) => void;
+  /** FPS configurados por cámara (pastilla de telemetría). */
+  encodingFps?: Record<string, number>;
   emptyMessage?: string;
 }
 
@@ -27,6 +29,7 @@ export function CameraGrid({
   onSelect,
   actions,
   onStreamError,
+  encodingFps = {},
   emptyMessage = "Aún no hay cámaras configuradas.",
 }: CameraGridProps) {
   if (cameras.length === 0) {
@@ -60,6 +63,7 @@ export function CameraGrid({
           status={statuses[camera.id] ?? "unknown"}
           streamUrl={streamUrls[camera.id]}
           thumbnailUrl={thumbnails[camera.id]}
+          encodingFps={encodingFps[camera.id] ?? null}
           activeViewers={viewers[camera.id]}
           onSelect={onSelect}
           onStreamError={onStreamError ? () => onStreamError(camera.id) : undefined}
