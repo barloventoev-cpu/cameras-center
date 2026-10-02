@@ -5,21 +5,44 @@ export interface SourceSpec {
   sourceType: CameraSourceType;
   /** URL de conexión (rtsp/mjpeg) o identificador de fuente sintética. */
   connection: string;
+  /** Tope de ancho en px (elegido por el admin; el alto sigue al aspecto). */
+  width?: number;
+  /** Fotogramas por segundo (tope 2; lo fija el admin). */
+  fps?: number;
+}
+
+/** Codificación por defecto: 640 px de ancho y 2 fps como máximo. */
+export const DEFAULT_ENCODING = { width: 640, fps: 2 } as const;
+
+/** Sanea un encoding parcial (del store local o del server): recorta a rango. */
+export function sanitizeEncoding(input: { width?: unknown; fps?: unknown }): {
+  width: number;
+  fps: number;
+} {
+  const w = typeof input.width === "number" && Number.isFinite(input.width) ? Math.round(input.width) : DEFAULT_ENCODING.width;
+  const f = typeof input.fps === "number" && Number.isFinite(input.fps) ? input.fps : DEFAULT_ENCODING.fps;
+  const width = Math.min(640, Math.max(160, w % 2 === 0 ? w : w - 1));
+  const fps = [0.5, 1, 1.5, 2].includes(f) ? (f as 0.5 | 1 | 1.5 | 2) : DEFAULT_ENCODING.fps;
+  return { width, fps };
 }
 
 /** Salida común: JPEG secuencial por stdout, listo para `multipart/x-mixed-replace`.
- *  Tope de 640 px de ancho: cada fotograma pesa ~4× menos que a 1280 (menor
- *  consumo de ancho de banda del server en Render y de los clientes). */
-const OUTPUT_ARGS = [
-  "-an",
-  "-vf",
-  "fps=6,scale='min(640,iw)':-2",
-  "-q:v",
-  "6",
-  "-f",
-  "mjpeg",
-  "pipe:1",
-];
+ *  El tope de ancho y los fps los fija el administrador por cámara (ver
+ *  EncodingStore): menos píxeles y menos fps = menos ancho de banda del
+ *  server en Render y de los clientes. */
+export function buildOutputArgs(spec: SourceSpec): string[] {
+  const { width, fps } = sanitizeEncoding({ width: spec.width, fps: spec.fps });
+  return [
+    "-an",
+    "-vf",
+    `fps=${fps},scale='min(${width},iw)':-2`,
+    "-q:v",
+    "6",
+    "-f",
+    "mjpeg",
+    "pipe:1",
+  ];
+}
 
 /**
  * Construye la línea de comandos de FFmpeg para una cámara.
@@ -30,7 +53,7 @@ const OUTPUT_ARGS = [
  */
 export function buildFfmpegArgs(spec: SourceSpec): string[] {
   const input = buildInputArgs(spec);
-  return [...input, ...OUTPUT_ARGS];
+  return [...input, ...buildOutputArgs(spec)];
 }
 
 /**

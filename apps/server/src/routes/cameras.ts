@@ -257,6 +257,85 @@ camerasRouter.post("/:id/clip", requireAuth, async (req, res) => {
   }
 });
 
+/** Codificación por cámara (resolución/FPS del panel del admin). */
+const EncodingRequestSchema = z.object({
+  width: z.number().int().min(160).max(640).refine((n) => n % 2 === 0, {
+    message: "ancho par entre 160 y 640",
+  }),
+  fps: z.union([z.literal(0.5), z.literal(1), z.literal(1.5), z.literal(2)]),
+});
+
+type EncodingGateway = {
+  requestEncoding(cameraId: string, width: number, fps: number): boolean;
+  lastEncoding(cameraId: string): { width: number; fps: number } | undefined;
+  stats(): { agents: number };
+};
+
+/**
+ * Codificación actual de la cámara (lo último reportado por el agent; por
+ * defecto 640 px @ 2 fps). Acepta API key porque TuQuotaAdmin la llama con la
+ * clave de integración que guarda en su backend (nunca llega al navegador).
+ */
+camerasRouter.get("/:id/encoding", requirePrincipal, principalRateLimit, async (req, res) => {
+  const id = req.params.id;
+  if (!id) return res.status(400).json({ error: "Falta el id" });
+  try {
+    const camera = await store.get(id);
+    if (!camera) return res.status(404).json({ error: "Camara no encontrada" });
+
+    const gateway = req.app.locals.gateway as EncodingGateway | undefined;
+    const reported = gateway?.lastEncoding(id);
+    const width = reported?.width ?? 640;
+    const fps = reported?.fps ?? 2;
+    res.json({
+      cameraId: id,
+      width,
+      fps,
+      agentConnected: (gateway?.stats().agents ?? 0) > 0,
+      custom: width !== 640 || fps !== 2,
+    });
+  } catch (error) {
+    handleError(res, error, "get-encoding");
+  }
+});
+
+/**
+ * Cambia resolución/FPS de una cámara: el agent reinicia su FFmpeg (corte
+ * breve de ~2-5 s) y confirma en su próximo reporte de estado (~10 s). Sin
+ * agent conectado responde 409 (igual que los clips).
+ */
+camerasRouter.patch("/:id/encoding", requirePrincipal, principalRateLimit, async (req, res) => {
+  const id = req.params.id;
+  if (!id) return res.status(400).json({ error: "Falta el id" });
+
+  const parsed = EncodingRequestSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Payload invalido", issues: parsed.error.issues });
+  }
+
+  try {
+    const camera = await store.get(id);
+    if (!camera) return res.status(404).json({ error: "Camara no encontrada" });
+
+    const gateway = req.app.locals.gateway as EncodingGateway | undefined;
+    if (!gateway) return res.status(503).json({ error: "Relay no disponible" });
+
+    const { width, fps } = parsed.data;
+    if (!gateway.requestEncoding(id, width, fps)) {
+      return res.status(409).json({ error: "Sin agent conectado: no se puede aplicar", reason: "sin-agent" });
+    }
+
+    res.json({
+      cameraId: id,
+      width,
+      fps,
+      note: "Pedido enviado al agent: reinicia el FFmpeg (corte breve) y lo confirma en su próximo reporte.",
+    });
+  } catch (error) {
+    handleError(res, error, "set-encoding");
+  }
+});
+
 camerasRouter.get("/:id", async (req, res) => {
   try {
     const id = req.params.id;

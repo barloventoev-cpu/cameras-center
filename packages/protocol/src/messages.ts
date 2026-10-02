@@ -137,11 +137,31 @@ export const RecordClipSchema = z.object({
 });
 export type RecordClip = z.infer<typeof RecordClipSchema>;
 
+/**
+ * Codificación por cámara (resolución/FPS elegidos por el administrador).
+ * Ancho = tope en px (el alto se ajusta al aspecto); fps con tope de 2.
+ */
+export const EncodingSchema = z.object({
+  width: z.number().int().min(160).max(640).refine((n) => n % 2 === 0, {
+    message: "ancho par entre 160 y 640",
+  }),
+  fps: z.union([z.literal(0.5), z.literal(1), z.literal(1.5), z.literal(2)]),
+});
+export type CameraEncoding = z.infer<typeof EncodingSchema>;
+
+/** El server pide al agent aplicar una codificación (reinicia el FFmpeg). */
+export const SetEncodingSchema = EncodingSchema.extend({
+  type: z.literal("server:setEncoding"),
+  cameraId: z.string(),
+});
+export type SetEncoding = z.infer<typeof SetEncodingSchema>;
+
 export const ServerToAgentMessageSchema = z.discriminatedUnion("type", [
   StartStreamSchema,
   StopStreamSchema,
   ConfigSyncSchema,
   RecordClipSchema,
+  SetEncodingSchema,
 ]);
 export type ServerToAgentMessage = z.infer<typeof ServerToAgentMessageSchema>;
 
@@ -221,6 +241,8 @@ export const CHANNELS = {
   serverStartStream: "server:startStream",
   serverStopStream: "server:stopStream",
   serverConfigSync: "server:configSync",
+  /** El server pide al agent aplicar resolución/FPS a una cámara. */
+  serverSetEncoding: "server:setEncoding",
   viewerSubscribe: "viewer:subscribe",
   viewerUnsubscribe: "viewer:unsubscribe",
   streamMeta: "stream:meta",

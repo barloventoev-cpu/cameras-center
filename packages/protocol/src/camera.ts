@@ -51,6 +51,13 @@ export const CameraStatusReportSchema = z.object({
   fps: z.number().nullable(),
   bitrateKbps: z.number().nullable(),
   lastSeen: z.number(),
+  /** Codificación configurada (resolución/FPS): el server la cachea para GET /encoding. */
+  encoding: z
+    .object({
+      width: z.number().int(),
+      fps: z.number(),
+    })
+    .optional(),
 });
 export type CameraStatusReport = z.infer<typeof CameraStatusReportSchema>;
 

@@ -27,6 +27,8 @@ export interface ServerTransportHandlers {
   onDisconnect?: () => void;
   /** F7: el server pide un clip (disparo manual desde la API/UI). */
   onRecordClip?: (cameraId: string, durationMs: number) => void;
+  /** El server pide aplicar resolución/FPS a una cámara (panel del admin). */
+  onSetEncoding?: (cameraId: string, width: number, fps: number) => void;
 }
 
 /**
@@ -87,6 +89,13 @@ export function connectToServer(
     if (parsed.type !== "server:recordClip") return;
     console.log(`[agent] recordClip ${parsed.cameraId} (${parsed.durationMs} ms)`);
     handlers.onRecordClip?.(parsed.cameraId, parsed.durationMs);
+  });
+
+  socket.on(CHANNELS.serverSetEncoding, (raw) => {
+    const parsed = parseServerToAgentMessage(raw);
+    if (parsed.type !== "server:setEncoding") return;
+    console.log(`[agent] setEncoding ${parsed.cameraId} (${parsed.width}px @ ${parsed.fps}fps)`);
+    handlers.onSetEncoding?.(parsed.cameraId, parsed.width, parsed.fps);
   });
 
   return {

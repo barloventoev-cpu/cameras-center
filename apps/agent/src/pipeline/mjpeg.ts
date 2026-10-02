@@ -3,7 +3,7 @@ import type { Readable } from "node:stream";
 import type { CameraStatus } from "@cameras/protocol";
 import { redactSecrets, redactUrl } from "@cameras/core";
 import { config } from "../config";
-import { buildFfmpegArgs, type SourceSpec } from "./args";
+import { buildFfmpegArgs, sanitizeEncoding, type SourceSpec } from "./args";
 import { resolveFfmpegPath } from "./ffmpeg";
 import { splitJpegFrames } from "./jpeg";
 
@@ -66,12 +66,25 @@ export class MjpegPipeline {
   }
 
   updateSpec(spec: SourceSpec) {
-    const changed = spec.connection !== this.spec.connection || spec.sourceType !== this.spec.sourceType;
+    const changed =
+      spec.connection !== this.spec.connection ||
+      spec.sourceType !== this.spec.sourceType ||
+      (spec.width ?? this.spec.width) !== (this.spec.width ?? spec.width) ||
+      (spec.fps ?? this.spec.fps) !== (this.spec.fps ?? spec.fps);
     this.spec = spec;
     if (changed && (this.state === "running" || this.state === "starting")) {
-      // Reiniciar para aplicar la nueva URL (p.ej. credenciales corregidas)
+      // Reiniciar para aplicar la nueva URL o codificación (el FFmpeg en
+      // marcha no admite cambiar el filtro; los espectadores se conservan)
       this.restart();
     }
+  }
+
+  /**
+   * Aplica la codificación elegida por el admin (reinicia el FFmpeg en
+   * caliente si estaba en marcha; los espectadores se conservan).
+   */
+  applyEncoding(encoding: { width: number; fps: number }): void {
+    this.updateSpec({ ...this.spec, width: encoding.width, fps: encoding.fps });
   }
 
   // ---------------------------------------------------------------------------
@@ -292,10 +305,11 @@ export class MjpegPipeline {
     };
   }
 
-  reportStatus(): { cameraId: string; status: CameraStatus; online: boolean; fps: number; bitrateKbps: number; lastSeen: number } {
+  reportStatus(): { cameraId: string; status: CameraStatus; online: boolean; fps: number; bitrateKbps: number; lastSeen: number; encoding: { width: number; fps: number } } {
     const s = this.status();
     const status: CameraStatus =
       s.state === "error" ? "error" : s.online ? "online" : s.state === "stopped" ? "unknown" : "starting";
+    const { width, fps: encFps } = sanitizeEncoding({ width: this.spec.width, fps: this.spec.fps });
     return {
       cameraId: s.cameraId,
       status,
@@ -303,6 +317,7 @@ export class MjpegPipeline {
       fps: s.fps,
       bitrateKbps: s.bitrateKbps,
       lastSeen: s.lastFrameAt ?? Date.now(),
+      encoding: { width, fps: encFps },
     };
   }
 

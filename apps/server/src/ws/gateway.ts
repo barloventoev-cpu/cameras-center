@@ -46,6 +46,13 @@ export interface Gateway {
   stats(): GatewayStats;
   /** F7: pide al agent que grabe un clip. false = no hay ningún agent. */
   requestClip(cameraId: string, durationMs?: number): boolean;
+  /**
+   * Pide al agent aplicar resolución/FPS a una cámara. false = sin agent.
+   * Sin ACK: el agent lo confirma en su próximo reporte de estado.
+   */
+  requestEncoding(cameraId: string, width: number, fps: number): boolean;
+  /** Última codificación reportada por el agent (para GET /encoding). */
+  lastEncoding(cameraId: string): { width: number; fps: number } | undefined;
   /** Espectador HTTP (endpoint MJPEG): pide/apaga el stream del agent. */
   acquire(cameraId: string): void;
   release(cameraId: string): void;
@@ -53,6 +60,9 @@ export interface Gateway {
 
 const AGENT_ROOM = "agents";
 const cameraRoom = (cameraId: string) => `cam:${cameraId}`;
+
+/** Última codificación (resolución/FPS) reportada por el agent por cámara. */
+const lastEncodings = new Map<string, { width: number; fps: number }>();
 
 /** Frames enviados a un espectador que aún no ha confirmado (antimancha). */
 const MAX_INFLIGHT = 4;
@@ -181,6 +191,10 @@ export function createGateway(httpServer: HttpServer): Gateway {
       socket.to(AGENT_ROOM).emit(CHANNELS.agentStatus, payload);
       if (payload?.report?.cameraId) {
         io.to(cameraRoom(payload.report.cameraId)).emit(CHANNELS.agentStatus, payload);
+        const enc = payload.report.encoding;
+        if (enc && Number.isFinite(enc.width) && Number.isFinite(enc.fps)) {
+          lastEncodings.set(payload.report.cameraId, { width: enc.width, fps: enc.fps });
+        }
       }
     });
 
@@ -324,6 +338,17 @@ export function createGateway(httpServer: HttpServer): Gateway {
       });
       return true;
     },
+    requestEncoding: (cameraId, width, fps) => {
+      if ((io.sockets.adapter.rooms.get(AGENT_ROOM)?.size ?? 0) === 0) return false;
+      io.to(AGENT_ROOM).emit(CHANNELS.serverSetEncoding, {
+        type: "server:setEncoding",
+        cameraId,
+        width,
+        fps,
+      });
+      return true;
+    },
+    lastEncoding: (cameraId) => lastEncodings.get(cameraId),
     broadcastStatus: (cameraId, status) => {
       io.to(cameraRoom(cameraId)).emit(CHANNELS.agentStatus, { report: { cameraId, status } });
     },

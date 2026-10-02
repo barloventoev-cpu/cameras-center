@@ -1,6 +1,7 @@
 import { config } from "./config";
 import { checkFfmpeg, ensureDataDir } from "./pipeline/ffmpeg";
 import { PipelineRegistry, type AgentCamera } from "./pipeline/registry";
+import { EncodingStore } from "./pipeline/encoding";
 import { createStreamServer } from "./local/streamServer";
 import { connectToServer, type ServerTransport } from "./transport/server";
 import { RelayController } from "./relay";
@@ -9,7 +10,8 @@ import { ClipManager } from "./clip";
 import { clipSettings, motionSettings } from "@cameras/core";
 import type { AgentHello } from "@cameras/protocol";
 
-const registry = new PipelineRegistry();
+const encodingStore = new EncodingStore(config.dataDir);
+const registry = new PipelineRegistry(encodingStore);
 const motion = new MotionManager();
 const clips = new ClipManager();
 
@@ -99,6 +101,10 @@ async function main() {
       onStopStream: (cameraId, reason) => relay.detach(cameraId, reason),
       onDisconnect: () => relay.detachAll("sin conexión al server"),
       onRecordClip: (cameraId, durationMs) => clips.record(cameraId, "manual", durationMs),
+      onSetEncoding: (cameraId, width, fps) => {
+        const ok = registry.setEncoding(cameraId, { width, fps });
+        console.log(`[agent] setEncoding ${cameraId}: ${ok ? "aplicado" : "cámara desconocida"}`);
+      },
     },
   );
   transportRef.current = transport;
