@@ -1,4 +1,10 @@
 import { z } from "zod";
+import {
+  AgentDiscoverResultSchema,
+  ServerDiscoverSchema,
+  type AgentDiscoverResult,
+  type ServerDiscover,
+} from "./discovery";
 import { CameraSchema, CameraStatusReportSchema, StreamProfileSchema } from "./camera";
 
 /**
@@ -110,6 +116,8 @@ export const AgentMessageSchema = z.discriminatedUnion("type", [
   AgentEventSchema,
   AgentClipReadySchema,
   AgentDiskSchema,
+  /** F8: respuesta a `server:discover` (búsqueda de cámaras en la LAN). */
+  AgentDiscoverResultSchema,
 ]);
 export type AgentMessage = z.infer<typeof AgentMessageSchema>;
 
@@ -178,6 +186,8 @@ export const ServerToAgentMessageSchema = z.discriminatedUnion("type", [
   ConfigSyncSchema,
   RecordClipSchema,
   SetEncodingSchema,
+  /** F8: pide al agent que barra su red buscando cámaras. */
+  ServerDiscoverSchema,
 ]);
 export type ServerToAgentMessage = z.infer<typeof ServerToAgentMessageSchema>;
 
@@ -254,6 +264,10 @@ export const CHANNELS = {
   agentDisk: "agent:disk",
   /** F7: el server pide al agent que grabe un clip. */
   serverRecordClip: "server:recordClip",
+  /** F8: el server pide al agent buscar cámaras en su red. */
+  serverDiscover: "server:discover",
+  /** F8: el agent devuelve lo que encontró (hosts + ONVIF). */
+  agentDiscoverResult: "agent:discoverResult",
   /** F6: el server avisa a la web de un evento nuevo. */
   eventNew: "event:new",
   serverStartStream: "server:startStream",
@@ -325,6 +339,21 @@ export function safeParseAgentClipReady(raw: unknown) {
 
 export function parseRecordClip(raw: unknown): RecordClip {
   return RecordClipSchema.parse(raw);
+}
+
+// --- F8: descubrimiento de cámaras en la red -------------------------------
+/** Respuesta del agent a `server:discover` (siempre responde, aunque sea un error). */
+export function parseAgentDiscoverResult(raw: unknown): AgentDiscoverResult {
+  return AgentDiscoverResultSchema.parse(raw);
+}
+
+export function safeParseAgentDiscoverResult(raw: unknown) {
+  return AgentDiscoverResultSchema.safeParse(raw);
+}
+
+/** Petición de búsqueda server → agent. */
+export function parseServerDiscover(raw: unknown): ServerDiscover {
+  return ServerDiscoverSchema.parse(raw);
 }
 
 // Los frames van por el plano binario: este header viaja como primer argumento

@@ -5,6 +5,8 @@ export const CameraSourceTypeSchema = z.enum([
   "rtsp",
   "mjpeg",
   "onvif",
+  /** Webcam local (V4L2) del propio agent: se publica como MJPEG interno. */
+  "webcam",
   /** Fuente sintética (lavfi `testsrc`) para desarrollo sin cámara real. */
   "test",
 ]);
@@ -80,6 +82,8 @@ export const API = {
   webhook: (id: string) => `/api/v1/webhooks/${id}`,
   /** Almacenamiento: uso de Cloudinary/disco/eventos + purga manual. */
   storage: "/api/v1/storage",
+  /** F8: búsqueda de cámaras en la red local (la hace el agent) */
+  discover: "/api/v1/discover",
   /** F5: documentación pública */
   docs: "/api/docs",
   openapi: "/api/openapi.json",

@@ -3,6 +3,7 @@ import {
   CHANNELS,
   parseServerToAgentMessage,
   type AgentClipReady,
+  type AgentDiscoverResult,
   type AgentDisk,
   type AgentEvent,
   type AgentHello,
@@ -19,6 +20,8 @@ export interface ServerTransport {
   emitClipReady: (clip: AgentClipReady) => boolean;
   /** Uso de disco local (panel de almacenamiento). */
   emitDisk: (disk: AgentDisk) => void;
+  /** F8: devuelve el resultado de una búsqueda de cámaras en la LAN. */
+  emitDiscoverResult: (result: AgentDiscoverResult) => boolean;
 }
 
 export interface ServerTransportHandlers {
@@ -32,6 +35,8 @@ export interface ServerTransportHandlers {
   onRecordClip?: (cameraId: string, durationMs: number) => void;
   /** El server pide aplicar resolución/FPS a una cámara (panel del admin). */
   onSetEncoding?: (cameraId: string, width: number, fps: number) => void;
+  /** F8: el server pide buscar cámaras en la red local (siempre hay respuesta). */
+  onDiscover?: (requestId: string, options: unknown) => void;
 }
 
 /**
@@ -101,6 +106,23 @@ export function connectToServer(
     handlers.onSetEncoding?.(parsed.cameraId, parsed.width, parsed.fps);
   });
 
+  // F8: el server pide una búsqueda de cámaras en la LAN. Se tolera un payload
+  // raro: si el parsing falla se contesta igualmente con un error, para que la
+  // petición HTTP del server no se quede esperando hasta el timeout.
+  socket.on(CHANNELS.serverDiscover, (raw) => {
+    try {
+      const parsed = parseServerToAgentMessage(raw);
+      if (parsed.type !== "server:discover") return;
+      console.log(`[agent] discover pedido (${parsed.ip ?? parsed.subnet ?? "subred auto"})`);
+      handlers.onDiscover?.(parsed.requestId, parsed);
+    } catch (error) {
+      const requestId = String((raw as { requestId?: unknown })?.requestId ?? "");
+      if (!requestId) return;
+      console.warn(`[agent] discover inválido: ${error instanceof Error ? error.message : String(error)}`);
+      handlers.onDiscover?.(requestId, { invalid: true });
+    }
+  });
+
   return {
     socket,
     emitStatus: (report) => socket.emit(CHANNELS.agentStatus, { type: "agent:status", report }),
@@ -116,6 +138,11 @@ export function connectToServer(
     },
     emitDisk: (disk) => {
       socket.emit(CHANNELS.agentDisk, disk);
+    },
+    emitDiscoverResult: (result) => {
+      if (!socket.connected) return false;
+      socket.emit(CHANNELS.agentDiscoverResult, result);
+      return true;
     },
   };
 }

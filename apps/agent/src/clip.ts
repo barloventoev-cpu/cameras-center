@@ -42,6 +42,21 @@ interface ActiveClip {
   timer: NodeJS.Timeout;
 }
 
+/**
+ * Filtros de recodificación por tipo de fuente (`null` = ninguno).
+ *
+ * F9 — la webcam: el MJPEG interno no trae marcas de tiempo y el demuxer
+ * `mpjpeg` indexa los fotogramas **asumiendo 25 fps**. Con la captura real en
+ * `WEBCAM_FPS` (10 por defecto) el clip saldría 2,5× acelerado y `setpts`
+ * re-tima por número de fotograma al ritmo verdadero. Se recoge además a
+ * 640 px con `ultrafast`: en un portátil, H.264 a 720p no llegaba a
+ * producir 15 s de vídeo antes del `wanted + 20 s` del safety-net.
+ */
+function clipFilters(spec: SourceSpec): string | null {
+  if (spec.sourceType !== "webcam") return null;
+  return `setpts=N/${config.webcamFps}/TB,scale='min(640,iw)':-2`;
+}
+
 /** MP4 a grabar: copia el H.264 cuando existe, recodifica si no. */
 export function buildClipArgs(spec: SourceSpec, file: string, durationMs: number): string[] {
   const seconds = Math.max(1, Math.round(durationMs / 1000));
@@ -49,12 +64,16 @@ export function buildClipArgs(spec: SourceSpec, file: string, durationMs: number
   const codec =
     spec.sourceType === "rtsp" || spec.sourceType === "onvif"
       ? ["-c:v", "copy"]
-      : ["-c:v", "libx264", "-preset", "veryfast", "-crf", "28", "-pix_fmt", "yuv420p"];
+      : spec.sourceType === "webcam"
+        ? ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "28", "-pix_fmt", "yuv420p"]
+        : ["-c:v", "libx264", "-preset", "veryfast", "-crf", "28", "-pix_fmt", "yuv420p"];
+  const filters = clipFilters(spec);
 
   return [
     "-y",
     ...input,
     "-an",
+    ...(filters ? ["-vf", filters] : []),
     ...codec,
     "-t",
     String(seconds),

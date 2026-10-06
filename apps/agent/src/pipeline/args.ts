@@ -1,4 +1,5 @@
 import type { CameraSourceType } from "@cameras/protocol";
+import { webcamEndpoint } from "../local/webcam";
 
 export interface SourceSpec {
   cameraId: string;
@@ -70,6 +71,12 @@ export function buildInputArgs(spec: SourceSpec, options: { loglevel?: string } 
     case "mjpeg":
       // Cámara que expone un MJPEG por HTTP; se recodifica para normalizar fps/tamaño
       return ["-hide_banner", "-loglevel", loglevel, "-i", spec.connection];
+
+    case "webcam":
+      // Webcam local (V4L2). V4L2 sólo admite un proceso por dispositivo y aquí
+      // hay dos (visión + movimiento), así que el dueño es el propio agent: la
+      // captura una vez y la reparte por MJPEG en loopback (local/webcam.ts).
+      return ["-hide_banner", "-loglevel", loglevel, "-i", webcamEndpoint(spec.connection)];
 
     case "test":
       // Fuente sintética: patrón de prueba con contador. Sólo para desarrollo.

@@ -61,6 +61,7 @@ function openapi(base: string) {
       { name: "Imágenes", description: "Fotos puntuales y stream MJPEG" },
       { name: "API keys", description: "Credenciales para terceros" },
       { name: "Eventos", description: "Detección de movimiento y webhooks" },
+      { name: "Descubrimiento", description: "Búsqueda de cámaras en la red local" },
     ],
     components: {
       securitySchemes: { bearerAuth, apiKeyAuth: apiKeyHeader },
@@ -75,7 +76,7 @@ function openapi(base: string) {
             id: { type: "string", format: "uuid" },
             name: { type: "string" },
             brand: { type: "string", nullable: true },
-            sourceType: { type: "string", enum: ["rtsp", "mjpeg", "onvif", "test"] },
+            sourceType: { type: "string", enum: ["rtsp", "mjpeg", "onvif", "webcam", "test"] },
             host: { type: "string" },
             order: { type: "integer" },
             active: { type: "boolean" },
@@ -127,6 +128,60 @@ function openapi(base: string) {
             lastStatus: { type: "integer", nullable: true },
             lastAt: { type: "string", format: "date-time", nullable: true },
             lastError: { type: "string", nullable: true },
+          },
+        },
+        Discovery: {
+          type: "object",
+          description: "Resultado de una búsqueda de cámaras en la red local (F8)",
+          properties: {
+            agentId: { type: "string", nullable: true, description: "Agent que hizo la búsqueda" },
+            subnet: { type: "string", example: "192.168.1.0/24", description: "Subred realmente barrida" },
+            scanned: { type: "integer", description: "Hosts sondeados (254 en un /24)" },
+            elapsedMs: { type: "integer" },
+            at: { type: "string", format: "date-time" },
+            hosts: { type: "array", items: { $ref: "#/components/schemas/DiscoveredHost" } },
+          },
+        },
+        DiscoveredHost: {
+          type: "object",
+          properties: {
+            ip: { type: "string" },
+            open: { type: "array", items: { type: "integer" }, description: "Puertos TCP abiertos" },
+            http: {
+              type: "object",
+              nullable: true,
+              properties: { port: { type: "integer" }, server: { type: "string" }, title: { type: "string" } },
+            },
+            rtsp: {
+              type: "object",
+              nullable: true,
+              description: "Servidor RTSP vivo (`DESCRIBE` contesta)",
+              properties: {
+                port: { type: "integer" },
+                ok: { type: "boolean" },
+                uri: { type: "string", nullable: true, description: "Ruta que respondió" },
+                banner: { type: "string" },
+              },
+            },
+            onvif: {
+              type: "object",
+              nullable: true,
+              description: "Dispositivo ONVIF (WS-Discovery)",
+              properties: {
+                xaddr: { type: "string" },
+                manufacturer: { type: "string", nullable: true },
+                model: { type: "string", nullable: true },
+                firmware: { type: "string", nullable: true },
+                rtsp: { type: "string", nullable: true, description: "URL de GetStreamUri" },
+                authRequired: { type: "boolean" },
+                error: { type: "string", nullable: true },
+              },
+            },
+            suggestion: {
+              type: "string",
+              nullable: true,
+              description: "URL RTSP candidata para pegar en el alta (sin credenciales)",
+            },
           },
         },
       },
@@ -213,7 +268,7 @@ function openapi(base: string) {
               required: ["name", "connection"],
               properties: {
                 name: { type: "string" },
-                sourceType: { type: "string", enum: ["rtsp", "mjpeg", "onvif", "test"] },
+                sourceType: { type: "string", enum: ["rtsp", "mjpeg", "onvif", "webcam", "test"] },
                 connection: { type: "string", description: "rtsp://usuario:pass@ip:puerta/ruta" },
                 host: { type: "string" },
                 order: { type: "integer" },
@@ -294,6 +349,45 @@ function openapi(base: string) {
             "409": { description: "Sin agent conectado" },
             "404": errorResponse,
             "401": errorResponse,
+          },
+        },
+      },
+      [API.discover]: {
+        post: {
+          tags: ["Descubrimiento"],
+          summary: "Buscar cámaras en la red local (sólo JWT)",
+          description:
+            "F8: la búsqueda la hace el **agent**, que es el único que está en la LAN (en producción " +
+            "el server vive en Render y no ve la red privada); aquí sólo se correlaciona la petición " +
+            "con la respuesta. Barre la subred por TCP (80,443,554,8554,8080,8000,37777,8899,10554,34567), " +
+            "sondea HTTP (`Server`/`Title`) y RTSP (`DESCRIBE`) en los hosts vivos y, en paralelo, manda " +
+            "un M-SEARCH ONVIF (WS-Discovery) para leer marca, modelo y URL RTSP. Tarda de 5 a 30 s; " +
+            "sin agent conectado responde 409 y si el agent no contesta, 504.",
+          requestBody: {
+            required: false,
+            content: json({
+              type: "object",
+              properties: {
+                subnet: { type: "string", description: "Subred en CIDR (por defecto la del agent)", example: "192.168.1.0/24" },
+                ip: { type: "string", description: "Sólo esta IP (búsqueda puntual)", example: "192.168.1.20" },
+                ports: { type: "array", items: { type: "integer", minimum: 1, maximum: 65535 }, description: "Puertos TCP a sondear" },
+                timeoutMs: { type: "integer", minimum: 200, maximum: 3000, description: "Timeout de cada conexión" },
+                onvif: { type: "boolean", default: true, description: "Incluir el sondeo ONVIF por UDP" },
+                waitSec: { type: "integer", minimum: 5, maximum: 120, description: "Espera máxima al agent (60 por defecto)" },
+              },
+            }),
+          },
+          responses: {
+            "200": {
+              description: "Hosts encontrados",
+              content: json({ type: "object", properties: { discover: { $ref: "#/components/schemas/Discovery" } } }),
+            },
+            "400": errorResponse,
+            "401": errorResponse,
+            "409": { description: "Sin agent conectado (la red la ve sólo él)" },
+            "429": errorResponse,
+            "502": { description: "El agent contestó con un error" },
+            "504": { description: "El agent no contestó a tiempo" },
           },
         },
       },
@@ -441,6 +535,7 @@ function page(base: string): string {
     row("POST", "/api/v1/cameras", "JWT", "Crear cámara (la URL RTSP va cifrada)"),
     row("GET", "/api/v1/cameras/:id", "—", "Detalle de una cámara"),
     row("DELETE", "/api/v1/cameras/:id", "JWT", "Borrar cámara"),
+    row("POST", "/api/v1/discover", "JWT", "Buscar cámaras en la red local (barrido TCP + ONVIF)"),
     row("GET", "/api/v1/cameras/:id/frame.jpg", "JWT o key", "Último fotograma en JPEG"),
     row("GET", "/api/v1/cameras/thumbnails", "JWT o key", "Miniaturas en Cloudinary"),
     row("POST", "/api/v1/cameras/:id/thumbnail", "JWT", "Generar miniatura ahora"),

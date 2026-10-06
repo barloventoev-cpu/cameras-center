@@ -1,11 +1,15 @@
 import type { Server as HttpServer } from "node:http";
+import { randomUUID } from "node:crypto";
 import { Server, type Socket } from "socket.io";
 import {
   CHANNELS,
   safeParseAgentClipReady,
+  safeParseAgentDiscoverResult,
   safeParseAgentEvent,
   safeParseFrameHeader,
   safeParseViewerMessage,
+  type AgentDiscoverResult,
+  type DiscoverOptions,
   type StreamProfile,
 } from "@cameras/protocol";
 import { isApiKeyLike } from "@cameras/core";
@@ -33,6 +37,18 @@ export interface GatewayStats {
   cameras: Array<{ cameraId: string; viewers: number }>;
 }
 
+/**
+ * Resultado de una búsqueda de cámaras pedida al agent (F8).
+ *  - `sin-agent`: no hay ningún agent conectado (la red la ve sólo él).
+ *  - `timeout`: el agent no contestó en el plazo (búsqueda larga o caída).
+ *  - `error`: el agent contestó pero no pudo completar la búsqueda.
+ */
+export type DiscoverOutcome =
+  | { code: "ok"; result: AgentDiscoverResult }
+  | { code: "sin-agent" }
+  | { code: "timeout" }
+  | { code: "error"; message: string };
+
 export interface Gateway {
   io: Server;
   /** Nº de espectadores suscritos a una cámara. */
@@ -53,6 +69,11 @@ export interface Gateway {
   requestEncoding(cameraId: string, width: number, fps: number): boolean;
   /** Última codificación reportada por el agent (para GET /encoding). */
   lastEncoding(cameraId: string): { width: number; fps: number } | undefined;
+  /**
+   * F8: pide al agent que busque cámaras en su red y espera su respuesta.
+   * Devuelve `sin-agent` si no hay nadie escuchando y `timeout` si no contesta.
+   */
+  requestDiscover(options: DiscoverOptions, timeoutMs?: number): Promise<DiscoverOutcome>;
   /** Espectador HTTP (endpoint MJPEG): pide/apaga el stream del agent. */
   acquire(cameraId: string): void;
   release(cameraId: string): void;
@@ -95,6 +116,20 @@ export function createGateway(httpServer: HttpServer): Gateway {
 
   const streamRequestCbs: Array<(request: StreamRequest) => void> = [];
   const streamReleaseCbs: Array<(cameraId: string) => void> = [];
+
+  /**
+   * F8: peticiones de búsqueda en vuelo. El server manda `server:discover` con
+   * un `requestId` y el agent responde con el mismo; aquí se correlacionan.
+   */
+  const pendingDiscover = new Map<string, { resolve: (outcome: DiscoverOutcome) => void; timer: ReturnType<typeof setTimeout> }>();
+
+  const settleDiscover = (requestId: string, outcome: DiscoverOutcome): void => {
+    const pending = pendingDiscover.get(requestId);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    pendingDiscover.delete(requestId);
+    pending.resolve(outcome);
+  };
 
   /**
    * Espectadores que NO vienen por socket.io: el endpoint HTTP MJPEG
@@ -216,6 +251,23 @@ export function createGateway(httpServer: HttpServer): Gateway {
       agentDisk.at = typeof d.at === "number" ? d.at : Date.now();
     });
 
+    // --- F8: el agent devuelve el resultado de una búsqueda ------------------
+    socket.on(CHANNELS.agentDiscoverResult, (raw: unknown) => {
+      if (socket.data.role !== "agent") return;
+      const parsed = safeParseAgentDiscoverResult(raw);
+      if (!parsed.success) {
+        console.warn(`[gateway] agent:discoverResult inválido: ${parsed.error.issues[0]?.message ?? ""}`);
+        return;
+      }
+      const result = parsed.data;
+      settleDiscover(
+        result.requestId,
+        result.ok
+          ? { code: "ok", result }
+          : { code: "error", message: result.error ?? "El agent no pudo completar la búsqueda" },
+      );
+    });
+
     // --- F6: el agent avisa de un evento (movimiento) ------------------------
     socket.on(CHANNELS.agentEvent, (raw: unknown) => {
       if (socket.data.role !== "agent") return;
@@ -331,6 +383,15 @@ export function createGateway(httpServer: HttpServer): Gateway {
       ack?.({ ok: true });
     });
 
+    // F8: si se cae el único agent con una búsqueda en vuelo, contestar ya:
+    // si no, la petición HTTP del navegador esperaría al timeout completo.
+    socket.on("disconnecting", () => {
+      if (socket.data.role !== "agent") return;
+      const others = [...(io.sockets.adapter.rooms.get(AGENT_ROOM) ?? [])].filter((id) => id !== socket.id);
+      if (others.length > 0) return;
+      for (const requestId of [...pendingDiscover.keys()]) settleDiscover(requestId, { code: "sin-agent" });
+    });
+
     socket.on("disconnect", () => {
       for (const cameraId of socket.data.subscriptions ?? []) {
         if (viewerCount(cameraId) === 0) releaseStream(cameraId);
@@ -367,6 +428,20 @@ export function createGateway(httpServer: HttpServer): Gateway {
       return true;
     },
     lastEncoding: (cameraId) => lastEncodings.get(cameraId),
+    // F8: búsqueda de cámaras en la LAN. Se espera la respuesta del agent
+    // (barrido + ONVIF, ~5-30 s); sin agent ni timeout se contesta en seguida.
+    requestDiscover: (options, timeoutMs = 60_000) => {
+      if ((io.sockets.adapter.rooms.get(AGENT_ROOM)?.size ?? 0) === 0) return Promise.resolve({ code: "sin-agent" });
+      const requestId = randomUUID();
+      return new Promise<DiscoverOutcome>((resolve) => {
+        const timer = setTimeout(() => {
+          pendingDiscover.delete(requestId);
+          resolve({ code: "timeout" });
+        }, timeoutMs);
+        pendingDiscover.set(requestId, { resolve, timer });
+        io.to(AGENT_ROOM).emit(CHANNELS.serverDiscover, { type: "server:discover", requestId, ...options });
+      });
+    },
     broadcastStatus: (cameraId, status) => {
       io.to(cameraRoom(cameraId)).emit(CHANNELS.agentStatus, { report: { cameraId, status } });
     },

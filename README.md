@@ -40,6 +40,35 @@ npm run typecheck         # valida todo el monorepo
 npm run dev               # server :4000 · agent :4100 · web :5173
 ```
 
+O con el lanzador, que comprueba Node/FFmpeg, crea el `.env` si falta (generando
+los secretos), instala dependencias y valida los puertos antes de arrancar:
+
+```bash
+./start.sh                # arranca los tres servicios
+./start.sh --check        # sólo comprueba requisitos y puertos
+./start.sh --install      # npm install + arranque
+./stop.sh                 # los detiene (da igual cómo se hayan arrancado)
+```
+
+### Arranque automático al encender la PC
+
+Unidades **systemd de usuario** (sin sudo): arrancan al arrancar la máquina,
+aunque nadie haya iniciado sesión, y se relanzan solas si alguna se cae.
+
+```bash
+./autostart.sh on         # instala + habilita las unidades y las arranca
+./autostart.sh status     # estado de las unidades y health de cada servicio
+./autostart.sh logs       # journalctl en vivo de server/agent/web
+./autostart.sh off        # desinstala el autoarranque y los para
+```
+
+- `on` activa `loginctl enable-linger $USER`; si polkit no lo permite sin
+  contraseña, lo indica con el comando exacto a ejecutar con `sudo`.
+- Los servicios viven en `~/.config/systemd/user/cameras-{server,agent,web}.service`.
+- `./stop.sh` los **para ahora** pero deja el autoarranque puesto; para que no
+  arranquen al próximo encendido usa `./autostart.sh off`.
+- Logs: `journalctl --user -u cameras-server -u cameras-agent -u cameras-web`.
+
 > 📄 **PC con Ubuntu 24.04 + cámaras EZVIZ:** ver la guía completa en
 > [`docs/UBUNTU.md`](docs/UBUNTU.md) (instalación, red, URLs RTSP, systemd).
 >
@@ -156,6 +185,39 @@ app**. Autenticación WS-Security *UsernameToken* (PasswordDigest) + Basic HTTP.
 > Las cámaras "RTSP puro" (como la O-KAM de esta red, que sólo abre el 10554)
 > **no responden**: no hablan ONVIF. Para saber qué devuelve la sonda contra una
 > cámara real sin tenerla a mano: `npm run test:onvif` (mock SOAP local, 18 checks).
+
+## Búsqueda de cámaras desde la web (F8)
+
+La app tiene un panel **📡 Descubrir cámaras en la red** (arriba, junto a
+*Añadir cámara*) que barre la LAN y devuelve lo que encuentra con la URL
+candidata lista para pegar. El botón **Usar** rellena el formulario de alta
+(sólo falta añadir `usuario:contraseña@` detrás de `rtsp://`).
+
+```bash
+# desde la API (sólo JWT) — lo mismo que hace el panel:
+curl -X POST http://localhost:4000/api/v1/discover \
+  -H "Authorization: Bearer $JWT" -H 'Content-Type: application/json' \
+  -d '{}'                          # subred autodetectada
+#   -d '{"ip":"192.168.1.20"}'     # búsqueda puntual de una IP
+#   -d '{"subnet":"192.168.1.0/24","onvif":false}'
+```
+
+La búsqueda **la hace el agent**, que es el único que está en la LAN: el server
+(en producción, en Render) sólo correlaciona la petición con la respuesta por
+WebSocket (`server:discover` → `agent:discoverResult`, mismo `requestId`). Dos
+sondeos en paralelo:
+
+1. **TCP** por los puertos típicos (80, 443, 554, 8554, 8080, 8000, 37777,
+   8899, 10554, 34567). En cada host vivo sondea HTTP (`Server`/`Title`) y RTSP
+   con `DESCRIBE` probando varias rutas: la O-KAM sólo contesta a `/tcp/av0_0`.
+2. **ONVIF** por WS-Discovery (UDP `239.255.255.250:3702`) →
+   `GetDeviceInformation → GetCapabilities → GetProfiles → GetStreamUri`
+   (marca, modelo y URL RTSP).
+
+Tarda de 5 a 10 s en una LAN doméstica. Respuestas: `200` con los hosts,
+`409` si no hay agent conectado, `504` si no contesta, `502` si el agent
+devuelve error (p. ej. *«ya hay una búsqueda en curso»*) y `429` a partir de 10
+barridos por minuto y usuario.
 
 ## API pública para terceros (F5)
 
@@ -308,11 +370,53 @@ curl -X POST http://localhost:4000/api/v1/cameras/<id>/clip \
 npm run test:f7                         # 65 comprobaciones end-to-end
 ```
 
+## Webcam local como cámara IP (F9)
+
+Una webcam conectada al equipo del agent (`/dev/video0`, USB o integrada) se da
+de alta como cualquier otra cámara —en el formulario, tipo *Webcam local*— y se
+ve, se detecta y se graba igual que las de red.
+
+- **El obstáculo**: V4L2 entrega el dispositivo a **un solo proceso**, y el
+  agent tiene dos consumidores independientes por cámara activa: el pipeline de
+  visión (F1/F3) y el detector de movimiento (F6). Si cada uno abría
+  `/dev/video0`, el segundo recibía `Device or resource busy` y no se llegaba a
+  ver nada.
+- **La solución**: `apps/agent/src/local/webcam.ts` es el **único dueño** del
+  dispositivo: un FFmpeg (`-f v4l2`) captura y reparte los frames por MJPEG en
+  loopback a todos los consumidores, haciendo el papel que juega una cámara IP
+  ante sus clientes.
+- **Ciclo de vida**: el primer cliente arranca la captura y el último la deja en
+  marcha 5 s más (sin espectadores la cámara no tiene por qué estar encendida).
+  Si otra aplicación tiene la webcam (una videollamada, p. ej.) se reintenta con
+  espera y se anota en el log, sin martillear.
+- **Privacidad**: `/webcam.mjpg` y `/webcam.jpg` sólo contestan en **loopback**
+  (`403` desde la LAN); el resto de la red ve la imagen por la app y por
+  `/stream/:id.mjpg`.
+- **Clips (F7)**: el MJPEG interno no trae marcas de tiempo y el demuxer
+  `mpjpeg` asume 25 fps por índice de fotograma, así que el clip se re-tima con
+  `setpts=N/<WEBCAM_FPS>/TB` y se recoge a 640 px. Sin eso salía 2,5×
+  acelerado y no llegaba a grabar los 15 s antes del safety-net.
+- **Depuración**: `GET :4100/api/webcam` (estado por dispositivo) y
+  `GET :4100/webcam.jpg?device=/dev/video0`.
+
+```bash
+# crear la cámara desde la web (tipo "Webcam local") o por API:
+curl -X POST http://localhost:4000/api/v1/cameras \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"Webcam portátil","sourceType":"webcam","connection":"/dev/video0"}'
+
+curl -s http://localhost:4100/api/webcam          # {"webcam":[{"device":"/dev/video0",…}]}
+npm run test:webcam                               # auto-prueba F9
+```
+
 ## Comandos
 
 | Comando | Descripción |
 |---|---|
 | `npm run dev` | Levanta server + agent + web en paralelo |
+| `./start.sh` | Lanzador con comprobaciones (Node, FFmpeg, `.env`, puertos) |
+| `./stop.sh` | Detiene los servicios (systemd o en primer plano) |
+| `./autostart.sh on\|off\|status\|logs` | Arranque automático al encender la PC (systemd de usuario) |
 | `npm run discover` | Barre la red local buscando cámaras (RTSP/HTTP/ONVIF) |
 | `npm run typecheck` | `tsc --noEmit` sobre todo el monorepo |
 | `npm run build` | Compila todos los workspaces |
@@ -321,6 +425,7 @@ npm run test:f7                         # 65 comprobaciones end-to-end
 | `npm run cloud:ping` | Comprueba credenciales Cloudinary (sube y baja un JPEG) |
 | `npm run discover -- --ip 192.168.1.0/24` | Descubre cámaras por RTSP/ONVIF en la LAN |
 | `npm run discover:onvif` | Descubrimiento ONVIF real por WS-Discovery (UDP) |
+| `POST /api/v1/discover` | F8: barre la red desde la web (la hace el agent) |
 | `npm run test:relay` | F3: simula un espectador remoto y valida el relay |
 | `npm run test:onvif` | F4: auto-test de la sonda ONVIF contra un mock |
 | `npm run test:f4` | F4: health + thumbnails en Cloudinary end-to-end |
@@ -329,6 +434,8 @@ npm run test:f7                         # 65 comprobaciones end-to-end
 | `npm run test:motion` | F6: auto-prueba del detector con `testsrc` |
 | `npm run test:f6` | F6: movimiento, snapshots y webhooks end-to-end |
 | `npm run test:f7` | F7: grabación de clips (FFmpeg + Cloudinary) end-to-end |
+| `npm run test:webcam` | F9: webcam local (V4L2) como cámara IP, auto-prueba |
+| `GET :4100/api/webcam` | F9: estado de la captura de la webcam en el agent |
 | `npm run test:ui` | Pruebas de interfaz con Chrome headless (capturas en `artifacts/ui`) |
 
 ## Roadmap
@@ -343,6 +450,8 @@ npm run test:f7                         # 65 comprobaciones end-to-end
 | **F5** | API pública con API keys, docs y rate limits | ✅ |
 | **F6** | Detección de movimiento + snapshots + webhooks | ✅ |
 | **F7** | Grabación local de clips por eventos | ✅ |
+| **F8** | Búsqueda de cámaras en la red desde la web (agent + ONVIF) | ✅ |
+| **F9** | Webcam local (V4L2) como cámara IP | ✅ |
 
 ## Decisiones de diseño
 

@@ -12,6 +12,7 @@ import { authRouter } from "./routes/auth";
 import { keysRouter } from "./routes/keys";
 import { eventsRouter } from "./routes/events";
 import { webhooksRouter } from "./routes/webhooks";
+import { discoverRouter } from "./routes/discover";
 import { docsRouter } from "./routes/docs";
 import { seedWebhooksFromEnv, loadPersistedWebhooks } from "./webhooks";
 import { runRetention, retentionStatus } from "./retention";
@@ -38,6 +39,7 @@ app.use(API.keys, keysRouter);
 app.use(API.events, eventsRouter); // F6: historial de eventos
 app.use(API.webhooks, webhooksRouter); // F6: avisos a otras apps
 app.use(API.storage, storageRouter); // uso de almacenamiento + purga manual
+app.use(API.discover, discoverRouter); // F8: búsqueda de cámaras en la LAN (la hace el agent)
 app.use(docsRouter); // /api/docs y /api/openapi.json
 
 // 404 JSON (evita que un 404 en HTML rompa a los clientes de API)

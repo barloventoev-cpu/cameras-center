@@ -138,8 +138,39 @@ export interface MotionEvent {
   clip: string | null;
 }
 
-/** Panel de almacenamiento (`GET /api/v1/storage`). */
-export interface StorageInfo {
+/** F8: host vivo encontrado en la red local por el agent. */
+export interface DiscoveredHost {
+  ip: string;
+  /** Puertos TCP abiertos (ordenados). */
+  open: number[];
+  http: { port: number; server: string; title: string } | null;
+  rtsp: { port: number; ok: boolean; uri: string | null; banner: string } | null;
+  onvif: {
+    xaddr: string;
+    manufacturer: string | null;
+    model: string | null;
+    firmware: string | null;
+    rtsp: string | null;
+    authRequired: boolean;
+    error: string | null;
+  } | null;
+  /** URL RTSP candidata, sin credenciales. */
+  suggestion: string | null;
+}
+
+/** F8: resultado de `POST /api/v1/discover`. */
+export interface DiscoverResult {
+  agentId: string | null;
+  /** Subred realmente barrida. */
+  subnet: string;
+  /** Hosts sondeados (254 en un /24). */
+  scanned: number;
+  elapsedMs: number;
+  hosts: DiscoveredHost[];
+  at: string;
+}
+
+/** Panel de almacenamiento (`GET /api/v1/storage`). */export interface StorageInfo {
   cloudinary:
     | { configured: false }
     | { configured: true; plan: string | null; storageUsedBytes: number; storageLimitBytes: number };
@@ -238,6 +269,19 @@ export const api = {
 
   deleteCamera: async (id: string): Promise<void> => {
     await request<void>(API.camera(id), { method: "DELETE" });
+  },
+
+  /**
+   * F8: busca cámaras en la red local. La hace el **agent** (barrido TCP +
+   * HTTP + RTSP y sondeo ONVIF); el server sólo relaya. Tarda de 5 a 30 s.
+   * Si no hay agent conectado lanza ApiError con status 409.
+   */
+  discover: async (options: { subnet?: string; ip?: string; onvif?: boolean } = {}): Promise<DiscoverResult> => {
+    const data = await request<{ discover: DiscoverResult }>(API.discover, {
+      method: "POST",
+      body: JSON.stringify(options),
+    });
+    return data.discover;
   },
 
   /** F5: API keys para terceros. */

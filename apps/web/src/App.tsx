@@ -3,6 +3,7 @@ import { CreateCameraSchema, type Camera, type CreateCameraInput } from "@camera
 import { CameraGrid } from "@cameras/ui";
 import { api, getToken, setToken, type HealthResponse, type StorageInfo } from "./api";
 import { AuthScreen } from "./AuthScreen";
+import { DiscoverPanel } from "./DiscoverPanel";
 import { KeysPanel } from "./KeysPanel";
 import { EventsPanel } from "./EventsPanel";
 import { useRelayFrames } from "./useRelayFrames";
@@ -255,8 +256,23 @@ export function App() {
       {error && <div className="error-banner">{error}</div>}
       {notice && <div className="notice-banner">{notice}</div>}
 
+      {/* F8: búsqueda automática en la LAN; «Usar» rellena el formulario de abajo */}
+      <DiscoverPanel
+        onAuthLost={() => {
+          setAuthed(false);
+          setError(null);
+        }}
+        onUseCamera={(input) => {
+          setName(input.name);
+          setConnection(input.connection);
+          setSourceType(input.sourceType);
+          document.getElementById("add-camera")?.scrollIntoView({ behavior: "smooth", block: "center" });
+          window.setTimeout(() => document.getElementById("camera-connection")?.focus(), 400);
+        }}
+      />
+
       <h2 className="section-title">Añadir cámara</h2>
-      <form className="card-panel form-grid" onSubmit={handleAdd}>
+      <form className="card-panel form-grid" id="add-camera" onSubmit={handleAdd}>
         <label>
           Nombre
           <input
@@ -271,15 +287,21 @@ export function App() {
           <select value={sourceType} onChange={(e) => setSourceType(e.target.value as typeof sourceType)}>
             <option value="rtsp">RTSP (mayoría de cámaras IP)</option>
             <option value="mjpeg">MJPEG por HTTP</option>
+            <option value="webcam">Webcam local (USB/integrada)</option>
             <option value="test">Test (fuente sintética)</option>
           </select>
         </label>
         <label>
           URL de conexión
           <input
+            id="camera-connection"
             value={connection}
             onChange={(e) => setConnection(e.target.value)}
-            placeholder="rtsp://admin:pass@192.168.1.10:554/Streaming/Channels/101"
+            placeholder={
+              sourceType === "webcam"
+                ? "/dev/video0"
+                : "rtsp://admin:pass@192.168.1.10:554/Streaming/Channels/101"
+            }
             required
           />
         </label>

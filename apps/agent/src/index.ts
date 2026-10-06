@@ -7,6 +7,7 @@ import { connectToServer, type ServerTransport } from "./transport/server";
 import { RelayController } from "./relay";
 import { MotionManager } from "./motionManager";
 import { ClipManager, measureClipsDir } from "./clip";
+import { discoverCameras, toDiscoverResult } from "./discover";
 import { clipSettings, motionSettings } from "@cameras/core";
 import type { AgentHello } from "@cameras/protocol";
 
@@ -86,7 +87,8 @@ async function main() {
 
   // F6: el agent declara que sabe detectar movimiento si la detección está activa
   // F7: y que sabe grabar clips (siempre: los manuales funcionan igualmente)
-  const capabilities: AgentHello["capabilities"] = ["rtsp", "mjpeg", "test", "record"];
+  // F8: y que puede buscar cámaras en la red (barrido TCP + ONVIF)
+  const capabilities: AgentHello["capabilities"] = ["rtsp", "mjpeg", "test", "record", "onvif"];
   if (motionSettings().enabled) capabilities.push("motion");
 
   const transport = connectToServer(
@@ -104,6 +106,34 @@ async function main() {
       onSetEncoding: (cameraId, width, fps) => {
         const ok = registry.setEncoding(cameraId, { width, fps });
         console.log(`[agent] setEncoding ${cameraId}: ${ok ? "aplicado" : "cámara desconocida"}`);
+      },
+      // F8: búsqueda de cámaras en la red local pedida desde la web.
+      // SIEMPRE se contesta: sin respuesta el server mantendría la petición
+      // HTTP del navegador esperando hasta su timeout.
+      onDiscover: (requestId, options) => {
+        void (async () => {
+          try {
+            const summary = await discoverCameras(options);
+            console.log(
+              `[agent] discover ${summary.subnet}: ${summary.hosts.length} host(s) de ${summary.scanned} en ${summary.elapsedMs} ms`,
+            );
+            transportRef.current?.emitDiscoverResult(toDiscoverResult(requestId, config.agentId, summary));
+          } catch (error) {
+            const message = (error instanceof Error ? error.message : String(error)).slice(0, 300);
+            console.warn(`[agent] discover falló: ${message}`);
+            transportRef.current?.emitDiscoverResult({
+              type: "agent:discoverResult",
+              requestId,
+              ok: false,
+              agentId: config.agentId,
+              subnet: "",
+              scanned: 0,
+              elapsedMs: 0,
+              hosts: [],
+              error: message,
+            });
+          }
+        })();
       },
     },
   );
