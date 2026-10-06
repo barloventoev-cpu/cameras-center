@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Camera, CameraSourceType, CreateCameraPayload } from "@cameras/protocol";
 import { decryptSecret, encryptSecret, extractHost, keyFromEnv } from "@cameras/core";
 import { hasSupabase } from "./config";
@@ -32,6 +32,10 @@ function getEncryptionKey(): Buffer | null {
   if (encryptionKey !== undefined) return encryptionKey;
   try {
     encryptionKey = keyFromEnv(process.env.CAMERA_ENC_KEY);
+    // Huella no reversible: permite comprobar que todos los entornos que
+    // comparten Supabase usan la MISMA clave (una distinta rompe el listado).
+    const fp = createHash("sha256").update(encryptionKey).digest("hex").slice(0, 8);
+    console.log(`  🔑 CAMERA_ENC_KEY fp=${fp} (debe coincidir en todos los entornos)`);
   } catch {
     console.warn("⚠️  CAMERA_ENC_KEY no válida: las URLs de cámara se guardarán en claro (sólo desarrollo)");
     encryptionKey = null;
@@ -132,7 +136,21 @@ export const supabaseStore: CameraStore = {
       .order("sort_order", { ascending: true })
       .order("name", { ascending: true });
     if (error) throw new Error(`Supabase list: ${error.message}`);
-    return ((data ?? []) as CameraRow[]).map(rowToCamera);
+    const out: StoredCamera[] = [];
+    for (const row of (data ?? []) as CameraRow[]) {
+      try {
+        out.push(rowToCamera(row));
+      } catch (err) {
+        // Una fila cifrada con otra CAMERA_ENC_KEY (p.ej. dos servidores con
+        // claves distintas compartiendo Supabase) no debe tumbar todo el
+        // listado: se omite y se avisa en el log para alinear las claves.
+        console.error(
+          `[cameras] omitiendo ${row.id} (${row.name}): no se pudo descifrar (¿CAMERA_ENC_KEY distinta?):`,
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
+    return out;
   },
 
   async get(id) {
