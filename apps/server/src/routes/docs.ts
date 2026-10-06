@@ -507,6 +507,45 @@ function openapi(base: string) {
           responses: { "204": { description: "Borrado" }, "404": errorResponse, "403": errorResponse },
         },
       },
+      "/api/v1/settings/integrations": {
+        get: {
+          tags: ["Salud"],
+          summary: "Estado de Cloudinary/Supabase (sólo JWT, sin secretos)",
+          responses: { "200": { description: "Estado" }, "401": errorResponse },
+        },
+      },
+      "/api/v1/settings/cloudinary": {
+        put: {
+          tags: ["Salud"],
+          summary: "Guardar CLOUDINARY_URL (sólo JWT de owner)",
+          requestBody: {
+            required: true,
+            content: json({
+              type: "object",
+              properties: { url: { type: "string", description: "cloudinary://api_key:api_secret@cloud_name (vacío = borrar)" } },
+            }),
+          },
+          responses: { "200": { description: "Guardado" }, "400": errorResponse, "403": errorResponse },
+        },
+      },
+      "/api/v1/settings/supabase": {
+        put: {
+          tags: ["Salud"],
+          summary: "Guardar SUPABASE_URL / SERVICE_KEY (sólo JWT de owner)",
+          requestBody: {
+            required: true,
+            content: json({
+              type: "object",
+              properties: {
+                url: { type: "string", description: "Base del proyecto (https://xxxx.supabase.co)" },
+                serviceKey: { type: "string", description: "service_role (nunca se devuelve)" },
+                clearKey: { type: "boolean", description: "true = borrar la key (vuelve a memoria)" },
+              },
+            }),
+          },
+          responses: { "200": { description: "Guardado" }, "400": errorResponse, "403": errorResponse },
+        },
+      },
     },
   };
 }
@@ -549,6 +588,9 @@ function page(base: string): string {
     row("GET", "/api/v1/webhooks", "JWT", "Listar webhooks (sin secretos)"),
     row("POST", "/api/v1/webhooks", "JWT owner", "Crear webhook (devuelve el secreto una vez)"),
     row("DELETE", "/api/v1/webhooks/:id", "JWT owner", "Borrar webhook"),
+    row("GET", "/api/v1/settings/integrations", "JWT", "Estado de Cloudinary/Supabase (sin secretos)"),
+    row("PUT", "/api/v1/settings/cloudinary", "JWT owner", "Guardar CLOUDINARY_URL (se aplica sin reiniciar)"),
+    row("PUT", "/api/v1/settings/supabase", "JWT owner", "Guardar SUPABASE_URL / SERVICE_KEY (se aplica sin reiniciar)"),
   ].join("\n");
 
   return `<!doctype html>

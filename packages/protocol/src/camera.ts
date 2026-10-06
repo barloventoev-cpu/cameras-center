@@ -84,6 +84,8 @@ export const API = {
   storage: "/api/v1/storage",
   /** F8: búsqueda de cámaras en la red local (la hace el agent) */
   discover: "/api/v1/discover",
+  /** Configuración de integraciones (Cloudinary + Supabase) desde la web */
+  settings: "/api/v1/settings",
   /** F5: documentación pública */
   docs: "/api/docs",
   openapi: "/api/openapi.json",

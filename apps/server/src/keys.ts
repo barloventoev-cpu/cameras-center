@@ -68,7 +68,7 @@ function normalizeScopes(scopes: unknown): ApiScope[] {
 
 export const keyStore = {
   get backend(): "supabase" | "memory" {
-    return hasSupabase ? "supabase" : "memory";
+    return hasSupabase() ? "supabase" : "memory";
   },
 
   /** Crea la key. Devuelve el registro público y la key EN CLARO (una sola vez). */
@@ -81,7 +81,7 @@ export const keyStore = {
     const { key, hash } = generateApiKey();
     const createdAt = new Date().toISOString();
 
-    if (hasSupabase) {
+    if (hasSupabase()) {
       const { data, error } = await getSupabase()
         .from("api_keys")
         .insert({ label, key_hash: hash, scopes, rate_limit: rateLimit, owner_id: ownerId })
@@ -126,7 +126,7 @@ export const keyStore = {
   },
 
   async list(ownerId: string | null): Promise<ApiKeyPublic[]> {
-    if (hasSupabase) {
+    if (hasSupabase()) {
       let query = getSupabase()
         .from("api_keys")
         .select("id, label, scopes, rate_limit, revoked_at, created_at, owner_id")
@@ -166,7 +166,7 @@ export const keyStore = {
 
   /** Revoca (no borra: así queda constancia de quién la usó). */
   async revoke(id: string, ownerId: string | null): Promise<boolean> {
-    if (hasSupabase) {
+    if (hasSupabase()) {
       // `.select("id")` es imprescindible: PostgREST no devuelve filas tras un
       // UPDATE sin `Prefer: return=…`, y sin filas "revocada" parecería falsa.
       let query = getSupabase()
@@ -190,7 +190,7 @@ export const keyStore = {
   },
 
   async count(): Promise<{ total: number; active: number; revoked: number }> {
-    if (hasSupabase) {
+    if (hasSupabase()) {
       const supabase = getSupabase();
       const [total, revoked] = await Promise.all([
         supabase.from("api_keys").select("id", { count: "exact", head: true }),
@@ -207,7 +207,7 @@ export const keyStore = {
   },
 
   async findByHash(hash: string): Promise<ApiKeyRecord | null> {
-    if (hasSupabase) {
+    if (hasSupabase()) {
       const { data, error } = await getSupabase()
         .from("api_keys")
         .select("id, label, key_hash, scopes, rate_limit, revoked_at, created_at, owner_id")

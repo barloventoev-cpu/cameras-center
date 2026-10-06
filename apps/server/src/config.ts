@@ -18,7 +18,7 @@ export const config = {
   port: toInt(process.env.PORT, 4000),
   corsOrigin: process.env.CORS_ORIGIN ?? "http://localhost:5173",
   version: "0.1.0",
-  /** F2: credenciales Supabase */
+  /** F2: credenciales Supabase (se re-sincronizan con applyRuntimeEnv). */
   supabaseUrl: process.env.SUPABASE_URL ?? "",
   supabaseKey: process.env.SUPABASE_SERVICE_KEY ?? "",
   supabaseSchema: process.env.SUPABASE_SCHEMA ?? "public",
@@ -30,6 +30,25 @@ export const config = {
   seedDemo: process.env.SEED_DEMO === "true",
   /** Token que debe presentar el agent en /api/agent/* y en el WS */
   agentToken: process.env.AGENT_TOKEN ?? "",
-} as const;
+};
 
-export const hasSupabase = Boolean(config.supabaseUrl && config.supabaseKey);
+/** ¿Hay credenciales Supabase utilizables ahora mismo? (lee process.env en vivo
+ *  para que la sección de Configuración pueda activarlo sin reiniciar). */
+export function hasSupabase(): boolean {
+  const url = process.env.SUPABASE_URL ?? config.supabaseUrl;
+  const key = process.env.SUPABASE_SERVICE_KEY ?? config.supabaseKey;
+  return Boolean(url && key);
+}
+
+/** Re-sincroniza `config` con `process.env` tras guardar desde la UI. */
+export function refreshRuntimeConfig(): void {
+  config.supabaseUrl = process.env.SUPABASE_URL ?? "";
+  config.supabaseKey = process.env.SUPABASE_SERVICE_KEY ?? "";
+  config.supabaseSchema = process.env.SUPABASE_SCHEMA ?? "public";
+}
+
+/** Aplica variables en memoria + `config` (el guardado en `.env` lo hace settings). */
+export function applyRuntimeEnv(vars: Record<string, string>): void {
+  for (const [k, v] of Object.entries(vars)) process.env[k] = v;
+  refreshRuntimeConfig();
+}

@@ -122,7 +122,7 @@ function rowToCamera(row: CameraRow): StoredCamera {
 
 export const supabaseStore: CameraStore = {
   backend: "supabase",
-  ready: () => hasSupabase,
+  ready: () => hasSupabase(),
 
   async list() {
     const { getSupabase } = await import("./db/supabase");
@@ -155,7 +155,23 @@ export const supabaseStore: CameraStore = {
       owner_id: ownerId ?? null,
     };
     const { data, error } = await getSupabase().from("cameras").insert(row).select("*").single();
-    if (error) throw new Error(`Supabase create: ${error.message}`);
+    if (error) {
+      // Token obsoleto (p.ej. emitido con el backend en memoria antes de
+      // configurar Supabase): su `sub` no existe en public.users y el FK
+      // cameras_owner_id_fkey rechaza el insert con un 500 opaco en la UI.
+      // Reintenta sin dueño: owner_id es informativo (el listado no filtra).
+      if (ownerId && /cameras_owner_id_fkey|violates foreign key/i.test(error.message)) {
+        console.warn(`[cameras] owner ${ownerId} inexistente (sesión obsoleta): se crea sin dueño`);
+        const { data: retryData, error: retryError } = await getSupabase()
+          .from("cameras")
+          .insert({ ...row, owner_id: null })
+          .select("*")
+          .single();
+        if (retryError) throw new Error(`Supabase create: ${retryError.message}`);
+        return rowToCamera(retryData as CameraRow);
+      }
+      throw new Error(`Supabase create: ${error.message}`);
+    }
     return rowToCamera(data as CameraRow);
   },
 
@@ -168,9 +184,22 @@ export const supabaseStore: CameraStore = {
 };
 
 // ---------------------------------------------------------------------------
-// Selección del backend
+// Selección del backend (dinámica: cambia al guardar SUPABASE_SERVICE_KEY)
 // ---------------------------------------------------------------------------
-export const store: CameraStore = hasSupabase ? supabaseStore : memoryStore;
+function activeStore(): CameraStore {
+  return hasSupabase() ? supabaseStore : memoryStore;
+}
+
+export const store: CameraStore = {
+  get backend(): "supabase" | "memory" {
+    return hasSupabase() ? "supabase" : "memory";
+  },
+  ready: () => activeStore().ready(),
+  list: (...args) => activeStore().list(...args),
+  get: (...args) => activeStore().get(...args),
+  create: (...args) => activeStore().create(...args),
+  remove: (...args) => activeStore().remove(...args),
+};
 
 /** Semilla opcional para probar la UI sin hardware real. */
 export async function seedDemo(): Promise<void> {

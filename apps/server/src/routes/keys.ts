@@ -57,6 +57,15 @@ keysRouter.post("/", requireAuth, async (req, res) => {
       apikey: record,
     });
   } catch (error) {
+    // Sesión obsoleta (p.ej. token de antes de configurar Supabase): su `sub`
+    // no existe en public.users y el FK api_keys_owner_id_fkey rechaza el
+    // insert. Se responde 401 para que la app pida re-entrar (401 → login),
+    // igual que con un token expirado. No se crea sin dueño: el listado y la
+    // revocación filtran por owner_id y la key quedaría invisible.
+    const msg = error instanceof Error ? error.message : "";
+    if (/owner_id_fkey|violates foreign key/i.test(msg)) {
+      return res.status(401).json({ error: "Sesión obsoleta: sal y vuelve a entrar para crear API keys" });
+    }
     handleError(res, error, "create");
   }
 });

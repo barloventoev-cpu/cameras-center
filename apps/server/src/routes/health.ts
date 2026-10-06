@@ -32,8 +32,8 @@ healthRouter.get(API.health, async (req, res) => {
     uptimeSec: Math.round(process.uptime()),
     storage: {
       cameras: store.backend,
-      supabase: hasSupabase ? "configured" : "pending (pega SUPABASE_SERVICE_KEY)",
-      schema: hasSupabase
+      supabase: hasSupabase() ? "configured" : "pending (pega SUPABASE_SERVICE_KEY)",
+      schema: hasSupabase()
         ? (getSchemaStatus()?.ok === false
             ? `faltan: ${getSchemaStatus()?.missing.join(", ")}`
             : getSchemaStatus()?.ok

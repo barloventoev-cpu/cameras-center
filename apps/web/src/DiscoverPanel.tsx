@@ -23,6 +23,7 @@ export function DiscoverPanel({
 }) {
   const [open, setOpen] = useState(false);
   const [subnet, setSubnet] = useState("");
+  const [ip, setIp] = useState("");
   const [onvif, setOnvif] = useState(true);
   const [busy, setBusy] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -45,7 +46,11 @@ export function DiscoverPanel({
     setError(null);
     setResult(null);
     try {
-      const found = await api.discover({ subnet: subnet.trim() || undefined, onvif });
+      const found = await api.discover({
+        subnet: subnet.trim() || undefined,
+        ip: ip.trim() || undefined,
+        onvif,
+      });
       setResult(found);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) return onAuthLost();
@@ -85,7 +90,8 @@ export function DiscoverPanel({
         El <em>agent</em> barre la subred por <strong>TCP</strong> (80, 443, 554, 8554, 8080, 10554…) y sondea{" "}
         <strong>HTTP</strong> y <strong>RTSP</strong> en cada host vivo; en paralelo manda un M-SEARCH{" "}
         <strong>ONVIF</strong> (WS-Discovery) para leer marca, modelo y URL RTSP. Tarda de 5 a 30 s y necesita el
-        agent conectado, porque la red la ve sólo él.
+        agent conectado, porque la red la ve sólo él. Si ya sabes la IP de la cámara (la ves en el router o en su
+        app), escríbela abajo: el sondeo directo tarda segundos.
       </p>
 
       {error && <div className="error-banner">{error}</div>}
@@ -100,6 +106,17 @@ export function DiscoverPanel({
             maxLength={64}
             pattern="\s*(\d{1,3}\.){3}\d{1,3}/\d{1,2}\s*"
             title="Formato x.x.x.0/24 (déjalo vacío para la subred por defecto)"
+          />
+        </label>
+        <label>
+          IP concreta (opcional)
+          <input
+            value={ip}
+            onChange={(e) => setIp(e.target.value)}
+            placeholder="192.168.1.20 — sondeo directo, tarda segundos"
+            maxLength={15}
+            pattern="\s*(\d{1,3}\.){3}\d{1,3}\s*"
+            title="IPv4 de la cámara (mírala en el router o en su app)"
           />
         </label>
         <label style={{ justifyContent: "center" }}>
@@ -130,8 +147,10 @@ export function DiscoverPanel({
 
           {result.hosts.length === 0 ? (
             <p className="hint">
-              Nada encontrado. Comprueba que estás en la misma subred que las cámaras, que la Wi-Fi no tiene aislamiento
-              de clientes y prueba con la subred exacta (por ejemplo <code>192.168.1.0/24</code>).
+              Nada encontrado. Revisa que la cámara esté <strong>encendida</strong> y en la <strong>misma
+              Wi-Fi</strong> que el agent (no en datos ni en otra red), que el router no aísle a los clientes, y
+              prueba a escribir su <strong>IP concreta</strong> arriba (la ves en el router o en la app de la
+              cámara). Si ni así responde, puede usar un puerto raro o estar sólo en la nube del fabricante.
             </p>
           ) : (
             <table className="keys-table">

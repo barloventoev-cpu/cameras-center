@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { api, setToken, type AuthStatus } from "./api";
+import { api, setToken, setUser, type AuthStatus } from "./api";
 
 export interface AuthScreenProps {
   onAuthenticated: () => void;
@@ -31,6 +31,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
       const result =
         mode === "login" ? await api.auth.login(email, password) : await api.auth.register(email, password);
       setToken(result.token);
+      setUser(result.user);
       onAuthenticated();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

@@ -219,7 +219,7 @@ export async function listEvents(options: ListEventsOptions = {}): Promise<Store
   const limit = Math.min(Math.max(options.limit ?? 20, 1), 100);
   const names = await cameraNames();
 
-  if (hasSupabase) {
+  if (hasSupabase()) {
     try {
       const { getSupabase } = await import("./db/supabase");
       let query = getSupabase()
@@ -246,7 +246,7 @@ export async function removeEvent(id: string): Promise<boolean> {
   const index = memoryEvents.findIndex((event) => event.id === id);
   if (index !== -1) memoryEvents.splice(index, 1);
 
-  if (hasSupabase) {
+  if (hasSupabase()) {
     try {
       const { getSupabase } = await import("./db/supabase");
       const { data, error } = await getSupabase().from("events").delete().eq("id", id).select("id");
@@ -275,7 +275,7 @@ export async function listEventsForPurge(
   limit: number,
   offset: number
 ): Promise<PurgeCandidate[]> {
-  if (hasSupabase) {
+  if (hasSupabase()) {
     try {
       const { getSupabase } = await import("./db/supabase");
       const { data, error } = await getSupabase()
@@ -317,7 +317,7 @@ export async function deleteEventsByIds(ids: string[]): Promise<number> {
     }
     return n;
   };
-  if (hasSupabase) {
+  if (hasSupabase()) {
     try {
       const { getSupabase } = await import("./db/supabase");
       let deleted = 0;
@@ -340,7 +340,7 @@ export async function deleteEventsByIds(ids: string[]): Promise<number> {
 }
 
 export async function eventCount(type = EVENT_TYPE): Promise<number> {
-  if (hasSupabase) {
+  if (hasSupabase()) {
     try {
       const { getSupabase } = await import("./db/supabase");
       const { count, error } = await getSupabase()
@@ -405,7 +405,7 @@ async function uploadSnapshot(message: AgentEvent): Promise<string | null> {
 }
 
 async function persist(event: StoredEvent, payload: Record<string, unknown>): Promise<string> {
-  if (!hasSupabase) {
+  if (!hasSupabase()) {
     const id = `mem-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     memoryEvents.unshift({ ...event, id });
     if (memoryEvents.length > MEMORY_LIMIT) memoryEvents.length = MEMORY_LIMIT;

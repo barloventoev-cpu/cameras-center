@@ -5,11 +5,11 @@ let cached: SupabaseClient | null = null;
 
 /**
  * Cliente Supabase (service_role). Se usa SÓLO desde el server; la key nunca
- * viaja al navegador. Si no está configurado, `hasSupabase` es false y el
+ * viaja al navegador. Si no está configurado, `hasSupabase()` es false y el
  * store cae en modo memoria (desarrollo local).
  */
 export function getSupabase(): SupabaseClient {
-  if (!hasSupabase) {
+  if (!hasSupabase()) {
     throw new Error("Supabase no configurado: define SUPABASE_URL y SUPABASE_SERVICE_KEY en .env");
   }
   if (!cached) {
@@ -53,4 +53,10 @@ export async function verifySchema(force = false): Promise<SchemaStatus> {
 
 export function getSchemaStatus(): SchemaStatus | null {
   return schemaCache;
+}
+
+/** Olvida el cliente cacheado (tras cambiar URL/key desde Configuración). */
+export function resetSupabaseClient(): void {
+  cached = null;
+  schemaCache = null;
 }

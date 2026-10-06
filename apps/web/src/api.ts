@@ -22,6 +22,35 @@ export function setToken(token: string | null): void {
   }
 }
 
+const USER_KEY = "cc_user";
+
+export interface StoredSessionUser {
+  email: string;
+  role: string;
+}
+
+/** Quién inició sesión (se guarda al entrar; sirve para mostrar email y rol). */
+export function getUser(): StoredSessionUser | null {
+  try {
+    const raw = localStorage.getItem(USER_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<StoredSessionUser>;
+    if (typeof parsed.email !== "string" || typeof parsed.role !== "string") return null;
+    return { email: parsed.email, role: parsed.role };
+  } catch {
+    return null;
+  }
+}
+
+export function setUser(user: StoredSessionUser | null): void {
+  try {
+    if (user) localStorage.setItem(USER_KEY, JSON.stringify(user));
+    else localStorage.removeItem(USER_KEY);
+  } catch {
+    // modo privado / storage bloqueado
+  }
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -201,6 +230,26 @@ export interface WebhookInfo {
   lastError: string | null;
 }
 
+/** Configuración de integraciones (Cloudinary + Supabase) desde la web. */
+export interface IntegrationsState {
+  supabase: {
+    configured: boolean;
+    backend: string;
+    url: string | null;
+    hasKey: boolean;
+    keyHint: string;
+    schema: string;
+    schemaStatus: { ok: boolean | null; missing: string[] } | null;
+  };
+  cloudinary: {
+    configured: boolean;
+    cloudName: string | null;
+    folder: string;
+    hasUrl: boolean;
+    urlHint: string | null;
+  };
+}
+
 export interface WebhookStats {
   configured: boolean;
   total: number;
@@ -327,6 +376,19 @@ export const api = {
     remove: async (id: string): Promise<void> => {
       await request<void>(API.webhook(id), { method: "DELETE" });
     },
+  },
+
+  /** Configuración de Cloudinary y Supabase (sólo owner para guardar/probar). */
+  settings: {
+    get: async (): Promise<IntegrationsState> => request<IntegrationsState>(`${API.settings}/integrations`),
+    saveCloudinary: async (url: string): Promise<IntegrationsState["cloudinary"]> =>
+      request(`${API.settings}/cloudinary`, { method: "PUT", body: JSON.stringify({ url }) }),
+    saveSupabase: async (payload: { url?: string; serviceKey?: string; clearKey?: boolean }): Promise<IntegrationsState["supabase"]> =>
+      request(`${API.settings}/supabase`, { method: "PUT", body: JSON.stringify(payload) }),
+    testCloudinary: async (url?: string): Promise<{ ok: boolean; error?: string; cloud?: string; plan?: string | null }> =>
+      request(`${API.settings}/cloudinary/test`, { method: "POST", body: JSON.stringify(url ? { url } : {}) }),
+    testSupabase: async (payload: { url?: string; serviceKey?: string } = {}): Promise<{ ok: boolean; error?: string; message?: string; warning?: string; missing?: string[] }> =>
+      request(`${API.settings}/supabase/test`, { method: "POST", body: JSON.stringify(payload) }),
   },
 };
 

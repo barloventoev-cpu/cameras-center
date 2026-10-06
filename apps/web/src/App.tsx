@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { CreateCameraSchema, type Camera, type CreateCameraInput } from "@cameras/protocol";
 import { CameraGrid } from "@cameras/ui";
-import { api, getToken, setToken, type HealthResponse, type StorageInfo } from "./api";
+import { api, getToken, getUser, setToken, setUser, type HealthResponse, type StorageInfo } from "./api";
 import { AuthScreen } from "./AuthScreen";
 import { DiscoverPanel } from "./DiscoverPanel";
 import { KeysPanel } from "./KeysPanel";
+import { SettingsPanel } from "./SettingsPanel";
 import { EventsPanel } from "./EventsPanel";
 import { useRelayFrames } from "./useRelayFrames";
 
@@ -13,6 +14,7 @@ type SourceMode = "lan" | "relay";
 
 export function App() {
   const [authed, setAuthed] = useState(() => Boolean(getToken()));
+  const [sessionUser, setSessionUser] = useState(() => getUser());
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
   /** FPS configurados por cámara (pastilla de telemetría sobre el video). */
@@ -58,7 +60,10 @@ export function App() {
   }
 
   const handleStreamError = useCallback((cameraId: string) => {
-    setSourceModes((prev) => (prev[cameraId] === "lan" ? { ...prev, [cameraId]: "relay" } : prev));
+    // Las cámaras nuevas aún no tienen entrada (sourceOf las trata como "lan"):
+    // hay que usar el mismo defecto aquí, si no el primer error no cambia a
+    // relay y la tarjeta se queda en "Conectando…" hasta recargar la página.
+    setSourceModes((prev) => ((prev[cameraId] ?? "lan") === "lan" ? { ...prev, [cameraId]: "relay" } : prev));
   }, []);
 
   const toggleSource = (cameraId: string) => {
@@ -143,6 +148,7 @@ export function App() {
       <AuthScreen
         onAuthenticated={() => {
           setAuthed(true);
+          setSessionUser(getUser());
           setError(null);
         }}
       />
@@ -207,6 +213,8 @@ export function App() {
 
   function logout() {
     setToken(null);
+    setUser(null);
+    setSessionUser(null);
     setAuthed(false);
   }
 
@@ -240,6 +248,11 @@ export function App() {
           Cameras Center
         </div>
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          {sessionUser && (
+            <div className="server-pill" title={`Sesión: ${sessionUser.email}`}>
+              {sessionUser.email} · {sessionUser.role}
+            </div>
+          )}
           <div className={`server-pill ${offline ? "error" : health ? "ok" : ""}`}>
             {offline
               ? "server desconectado"
@@ -284,7 +297,15 @@ export function App() {
         </label>
         <label>
           Tipo de origen
-          <select value={sourceType} onChange={(e) => setSourceType(e.target.value as typeof sourceType)}>
+          <select
+            value={sourceType}
+            onChange={(e) => {
+              const next = e.target.value as typeof sourceType;
+              setSourceType(next);
+              // al elegir la webcam se rellena sola la ruta típica (se puede cambiar a /dev/video1…)
+              if (next === "webcam" && !connection.trim()) setConnection("/dev/video0");
+            }}
+          >
             <option value="rtsp">RTSP (mayoría de cámaras IP)</option>
             <option value="mjpeg">MJPEG por HTTP</option>
             <option value="webcam">Webcam local (USB/integrada)</option>
@@ -304,6 +325,12 @@ export function App() {
             }
             required
           />
+          {sourceType === "webcam" && (
+            <span className="hint">
+              La webcam del equipo donde corre el agent (<code>/dev/video0</code>, <code>/dev/video1</code>…): se da
+              de alta igual que el resto y se ve en la app como cualquier cámara.
+            </span>
+          )}
         </label>
         <button type="submit" disabled={busy}>
           {busy ? "Guardando…" : "Agregar"}
@@ -380,6 +407,13 @@ export function App() {
       />
 
       <KeysPanel
+        onAuthLost={() => {
+          setAuthed(false);
+          setError(null);
+        }}
+      />
+
+      <SettingsPanel
         onAuthLost={() => {
           setAuthed(false);
           setError(null);

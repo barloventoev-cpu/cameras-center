@@ -126,7 +126,7 @@ export async function removeWebhook(id: string): Promise<boolean> {
   const index = records.findIndex((record) => record.id === id);
   if (index === -1) return false;
   const [removed] = records.splice(index, 1);
-  if (hasSupabase) {
+  if (hasSupabase()) {
     try {
       const { getSupabase } = await import("./db/supabase");
       const { error } = await getSupabase().from("webhooks").delete().eq("id", id);
@@ -145,7 +145,7 @@ export async function removeWebhook(id: string): Promise<boolean> {
  * con memoria (ver `supabase/migrations/0002_webhooks.sql`).
  */
 export async function loadPersistedWebhooks(): Promise<number> {
-  if (!hasSupabase) return 0;
+  if (!hasSupabase()) return 0;
   try {
     const { getSupabase } = await import("./db/supabase");
     const { data, error } = await getSupabase()
@@ -188,7 +188,7 @@ export async function loadPersistedWebhooks(): Promise<number> {
 }
 
 async function persistWebhook(record: WebhookRecord): Promise<void> {
-  if (!hasSupabase) return;
+  if (!hasSupabase()) return;
   try {
     const { getSupabase } = await import("./db/supabase");
     const { error } = await getSupabase().from("webhooks").upsert(

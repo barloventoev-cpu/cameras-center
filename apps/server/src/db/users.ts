@@ -99,7 +99,14 @@ const supabaseUsersStore: UserStore = {
   },
 };
 
-export const userStore: UserStore = hasSupabase ? supabaseUsersStore : memoryUsersStore;
+export const userStore: UserStore = {
+  get backend(): "supabase" | "memory" {
+    return hasSupabase() ? "supabase" : "memory";
+  },
+  findByEmail: (...args) => (hasSupabase() ? supabaseUsersStore : memoryUsersStore).findByEmail(...args),
+  create: (...args) => (hasSupabase() ? supabaseUsersStore : memoryUsersStore).create(...args),
+  count: (...args) => (hasSupabase() ? supabaseUsersStore : memoryUsersStore).count(...args),
+};
 
 /** Diagnóstico para /api/health */
 export function authInfo() {

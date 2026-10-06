@@ -96,7 +96,7 @@ export async function captureThumb(cameraId: string, force = false): Promise<Thu
 
 /** Última thumbnail por cámara (Supabase si hay, si no memoria). */
 export async function latestThumbnails(): Promise<Record<string, string>> {
-  if (hasSupabase) {
+  if (hasSupabase()) {
     try {
       const { data, error } = await getSupabase()
         .from("events")
@@ -121,7 +121,7 @@ export async function latestThumbnails(): Promise<Record<string, string>> {
 }
 
 export async function thumbCount(): Promise<number> {
-  if (hasSupabase) {
+  if (hasSupabase()) {
     try {
       const { count, error } = await getSupabase()
         .from("events")
@@ -136,7 +136,7 @@ export async function thumbCount(): Promise<number> {
 }
 
 async function persist(cameraId: string, result: CloudinaryUpload, frameAgeMs: number): Promise<void> {
-  if (!hasSupabase) return;
+  if (!hasSupabase()) return;
   try {
     const supabase = getSupabase();
     // Mantener UNA sola fila de thumbnail por cámara: `events` es para eventos,

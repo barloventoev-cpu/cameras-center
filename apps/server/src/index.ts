@@ -6,6 +6,7 @@ import { config, hasSupabase } from "./config";
 import { seedDemo, store } from "./store";
 import { healthRouter } from "./routes/health";
 import { storageRouter } from "./routes/storage";
+import { settingsRouter } from "./routes/settings";
 import { camerasRouter, streamsRouter } from "./routes/cameras";
 import { agentRouter } from "./routes/agent";
 import { authRouter } from "./routes/auth";
@@ -39,6 +40,7 @@ app.use(API.keys, keysRouter);
 app.use(API.events, eventsRouter); // F6: historial de eventos
 app.use(API.webhooks, webhooksRouter); // F6: avisos a otras apps
 app.use(API.storage, storageRouter); // uso de almacenamiento + purga manual
+app.use(API.settings, settingsRouter); // configuración Cloudinary/Supabase desde la web
 app.use(API.discover, discoverRouter); // F8: búsqueda de cámaras en la LAN (la hace el agent)
 app.use(docsRouter); // /api/docs y /api/openapi.json
 
@@ -66,7 +68,7 @@ gateway.onStreamRelease((cameraId) => {
 });
 
 async function bootstrap() {
-  if (hasSupabase) {
+  if (hasSupabase()) {
     try {
       const schema = await verifySchema(true);
       if (!schema.ok) {
@@ -105,7 +107,7 @@ async function bootstrap() {
     console.log(`     api      http://localhost:${config.port}${API.cameras}`);
     console.log(`     auth     http://localhost:${config.port}/api/auth/status`);
     console.log(`     docs     http://localhost:${config.port}${API.docs}`);
-    console.log(`     storage  ${store.backend}${hasSupabase ? "" : " (sin SUPABASE_SERVICE_KEY)"}`);
+    console.log(`     storage  ${store.backend}${hasSupabase() ? "" : " (sin SUPABASE_SERVICE_KEY)"}`);
     console.log(`     ws       origin=${config.corsOrigin}\n`);
   });
 }
