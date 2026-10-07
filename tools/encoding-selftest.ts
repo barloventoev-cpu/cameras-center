@@ -7,6 +7,10 @@
  * el panel que la configuración nueva está aplicada.
  *
  * Uso: npx tsx tools/encoding-selftest.ts   (o npm run test:encoding)
+ *
+ * Comprueba también (8) que un reinicio mientras FFmpeg aún estaba «starting»
+ * no deja el pipeline zombi: sin proceso, sin timers y con el spec nuevo sólo
+ * en el reporte — el caso exacto de una cámara que cambia de IP.
  */
 import { MjpegPipeline } from "../apps/agent/src/pipeline/mjpeg";
 import { sanitizeEncoding, type SourceSpec } from "../apps/agent/src/pipeline/args";
@@ -134,6 +138,37 @@ function running(spec: Partial<SourceSpec>) {
     sanitizeEncoding({ width: 50 }).width === 64 && sanitizeEncoding({ width: 97 }).width === 96,
     `50→${sanitizeEncoding({ width: 50 }).width}, 97→${sanitizeEncoding({ width: 97 }).width}`
   );
+}
+
+// 8) Un reinicio sobre un pipeline «starting» (cámara inalcanzable: FFmpeg
+//    lanzado, sin primer frame) no puede dejarlo zombi: sin proceso, sin
+//    timers y con `start()` cortado por su guard de «starting». Con el bug el
+//    spec nuevo se quedaba sólo en el reporte y nadie volvía a lanzar FFmpeg.
+{
+  const p = new MjpegPipeline({
+    cameraId: "cam-zombi",
+    sourceType: "rtsp",
+    connection: "rtsp://192.168.0.10/stream",
+    width: 640,
+    fps: 2,
+  } as SourceSpec) as Any;
+  p.state = "starting";
+  p.proc = null; // estado observado en producción tras abortar la conexión
+
+  p.updateSpec({ ...p.spec, connection: "rtsp://198.51.100.7/live", width: 64, fps: 0.5 });
+
+  const zombi = p.state === "starting" && !p.proc;
+  check(
+    "8. el reinicio en «starting» no deja el pipeline sin proceso",
+    !zombi,
+    `state=${p.state} proc=${p.proc ? "lanzado" : "null"}${zombi ? " (zombi)" : ""}`
+  );
+  check(
+    "8b. la nueva conexión queda en el spec (lo que usará el próximo FFmpeg)",
+    p.spec.connection === "rtsp://198.51.100.7/live" && p.spec.width === 64 && p.spec.fps === 0.5,
+    `spec=${JSON.stringify({ c: String(p.spec.connection).replace(/\/\/[^@/]+@/, "//***@"), w: p.spec.width, f: p.spec.fps })}`
+  );
+  p.stop(); // mata el FFmpeg de prueba y limpia timers
 }
 
 const failed = results.filter((r) => !r.ok);

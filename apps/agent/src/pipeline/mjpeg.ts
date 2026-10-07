@@ -105,7 +105,7 @@ export class MjpegPipeline {
       clearTimeout(this.stopTimer);
       this.stopTimer = null;
     }
-    if (this.state === "stopped" || this.state === "error") this.start();
+    if (this.needsStart()) this.start();
     if (this.latestFrame) listener(this.latestFrame);
 
     let active = true;
@@ -123,8 +123,20 @@ export class MjpegPipeline {
    * Usado por los snapshots: no debe dejar FFmpeg encendido indefinidamente.
    */
   ensureRunning(): void {
-    if (this.state === "stopped" || this.state === "error") this.start();
+    if (this.needsStart()) this.start();
     this.scheduleStop();
+  }
+
+  /**
+   * true si hay que (re)lanzar FFmpeg: apagado, en error o… «starting» sin
+   * proceso. Este último caso es un estado zombi que sólo podía darse tras un
+   * `restart()` sobre un pipeline que aún no había dado su primer frame (cámara
+   * inalcanzable): se mataba el proceso y `start()` se salía por su guard de
+   * «starting», dejando el pipeline sin FFmpeg, sin timers y sin manera de
+   * arrancar — ni siquiera un espectador nuevo lo reactivaba.
+   */
+  private needsStart(): boolean {
+    return this.state === "stopped" || this.state === "error" || (this.state === "starting" && !this.proc);
   }
 
   private scheduleStop() {
@@ -196,8 +208,15 @@ export class MjpegPipeline {
 
   private restart() {
     this.stopped = true;
+    if (this.restartTimer) clearTimeout(this.restartTimer);
+    this.restartTimer = null;
     this.cleanup();
     this.stopped = false;
+    // Clave: cleanup() no toca el estado, así que si el pipeline estaba en
+    // «starting» (FFmpeg lanzado, cámara inalcanzable, nunca hubo primer frame)
+    // el start() de abajo se saldría por su guard y quedaríamos sin proceso.
+    // Forzamos «stopped» para que el relanzado sea siempre efectivo.
+    this.state = "stopped";
     this.start();
   }
 
