@@ -87,6 +87,18 @@ class FrameCache {
     return frame ? Date.now() - frame.receivedAt : null;
   }
 
+  /**
+   * Antigüedad de todos los frames cacheados: la expone el health para que una
+   * integración sepa si cada cámara tiene señal real o es una foto vieja.
+   */
+  ages(): { cameraId: string; ageMs: number }[] {
+    const now = Date.now();
+    return [...this.frames.entries()].map(([cameraId, frame]) => ({
+      cameraId,
+      ageMs: now - frame.receivedAt,
+    }));
+  }
+
   clear(): void {
     this.frames.clear();
   }

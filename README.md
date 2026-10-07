@@ -133,7 +133,10 @@ Detalles que importan:
 - **Auth**: el WS valida en el handshake (`auth.token` = AGENT_TOKEN para el
   agent, JWT para los espectadores) y rechaza todo lo demás.
 - **`GET /api/v1/cameras/:id/frame.jpg`** (JWT o API key) devuelve el último
-  JPEG: fallback para quien no pueda abrir WebSocket y base de F5/F6.
+  JPEG: fallback para quien no pueda abrir WebSocket y base de F5/F6. Con el
+  agent apagado devuelve **404** en cuanto la foto cumple `FRAME_MAX_AGE_MS`
+  (60 s por defecto) en lugar de una imagen fantasma, y siempre manda
+  `X-Frame-Age-Ms`.
 - Al suscribirse llega primero el último frame cacheado con `seq: -1`
   ("puesta al día") para no dejar pantalla negra.
 

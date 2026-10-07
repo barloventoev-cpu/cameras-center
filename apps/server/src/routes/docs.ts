@@ -299,7 +299,9 @@ function openapi(base: string) {
           summary: "Último fotograma en JPEG",
           description:
             "Foto del instante de la petición (no es vídeo). Si nadie está mirando la cámara no hay frames " +
-            "recientes y se responde 404: abre la cámara en la app (o pide el stream MJPEG) para que el agent arranque.",
+            "recientes y se responde 404: abre la cámara en la app (o pide el stream MJPEG) para que el agent arranque. " +
+            "Una foto con más de 60 s (FRAME_MAX_AGE_MS) tampoco se envía —sería una imagen fantasma—, pero el 404 " +
+            "incluye X-Frame-Age-Ms y ageMs para que el consumidor pueda decir «sin señal».",
           parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
           responses: {
             "200": {

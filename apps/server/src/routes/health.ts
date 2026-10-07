@@ -47,8 +47,10 @@ healthRouter.get(API.health, async (req, res) => {
     auth: authInfo(),
     // F3: conexiones WebSocket vivas
     ws: gw ?? { connected: 0, agents: 0, viewers: 0, cameras: [] },
-    // F3: últimas imágenes recibidas (1 por cámara, sirve /frame.jpg)
-    frames: { cachedCameras: frameCache.size() },
+    // F3: últimas imágenes recibidas (1 por cámara, sirve /frame.jpg).
+    // `cameras` lleva la antigüedad de cada foto: un ageMs alto con ws.agents
+    // a 0 significa agent apagado (foto vieja, no hay vídeo en vivo).
+    frames: { cachedCameras: frameCache.size(), cameras: frameCache.ages() },
     // F4: miniaturas en Cloudinary
     cloudinary: {
       ...cloudinaryStatus(),

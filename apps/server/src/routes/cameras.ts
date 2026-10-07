@@ -38,7 +38,18 @@ camerasRouter.get("/", async (_req, res) => {
  * Sirve de API pública / fallback para quien no pueda abrir WebSocket: no es
  * vídeo, es una foto en el instante de la petición. Acepta JWT de usuario o
  * API key con scope `read` porque expone la imagen fuera de la LAN.
+ *
+ * Ojo con la foto vieja: con el agent apagado la caché conserva el último JPEG
+ * y reenviarlo sería una "imagen fantasma" (el integrador vería vídeo donde ya
+ * no lo hay). Por eso `FRAME_MAX_AGE_MS` (60 s por defecto, configurable) la
+ * sustituye por un 404 con `X-Frame-Age-Ms`, para que el consumidor pueda
+ * decir "sin señal" en lugar de pintar la foto caducada.
  */
+const FRAME_MAX_AGE_MS = (() => {
+  const raw = Number(process.env.FRAME_MAX_AGE_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : 60_000;
+})();
+
 camerasRouter.get("/:id/frame.jpg", requirePrincipal, principalRateLimit, async (req, res) => {
   const id = req.params.id;
   if (!id) return res.status(400).json({ error: "Falta el id" });
@@ -50,9 +61,24 @@ camerasRouter.get("/:id/frame.jpg", requirePrincipal, principalRateLimit, async 
     if (!frame) {
       return res.status(404).json({
         error: "Sin frames recientes: abre la camara en la app para que el agent arranque",
+        reason: "sin-agent",
       });
     }
     const ageMs = Date.now() - frame.receivedAt;
+    if (ageMs > FRAME_MAX_AGE_MS) {
+      // Foto caducada: NO se envía el JPEG (sería una imagen fantasma). El
+      // 404 conserva la cabecera de antigüedad por si el consumidor quiere
+      // mostrar "última imagen hace Ns".
+      return res
+        .set("Cache-Control", "no-store")
+        .set("X-Frame-Age-Ms", String(ageMs))
+        .status(404)
+        .json({
+          error: `Sin frames recientes (último hace ${Math.round(ageMs / 1000)} s): el agent no está conectado`,
+          reason: "sin-agent",
+          ageMs,
+        });
+    }
     res
       .set("Content-Type", "image/jpeg")
       .set("Cache-Control", "no-store")
@@ -97,9 +123,11 @@ export async function streamMjpeg(req: import("express").Request, res: import("e
     if (!camera) return res.status(404).json({ error: "Camara no encontrada" });
 
     const gateway = req.app.locals.gateway as
-      | { acquire(cameraId: string): void; release(cameraId: string): void }
+      | { acquire(cameraId: string): void; release(cameraId: string): void; stats?: () => { agents?: number } }
       | undefined;
     if (!gateway) return res.status(503).json({ error: "Relay no disponible" });
+    /** Nº de agents vivos; `undefined` si el gateway no lo expone (no se rinde antes). */
+    const gatewayStats = (): { agents?: number } | undefined => gateway.stats?.();
 
     const BOUNDARY = "frame";
     /** Sin frame nuevo en este tiempo se cierra (el cliente puede reconectar). */
@@ -110,6 +138,12 @@ export async function streamMjpeg(req: import("express").Request, res: import("e
     const FRESH_MS = 15_000;
     /** Espera al primer frame antes de contestar (el agent arranca FFmpeg en ~2-5 s). */
     const STARTUP_MS = 20_000;
+    /**
+     * Sin ningún agent conectado no puede llegar jamás un frame: a los
+     * `NO_AGENT_MS` se contesta 503 en vez de dejar al cliente colgado hasta
+     * `STARTUP_MS` (los proxies intermedios abortan antes y se pierde el motivo).
+     */
+    const NO_AGENT_MS = 8_000;
 
     let closed = false;
     /** ¿Ya se enviaron las cabeceras multipart? writeHead sólo no llega al cliente. */
@@ -118,6 +152,7 @@ export async function streamMjpeg(req: import("express").Request, res: import("e
     let lastWriteAt = Date.now();
     let watchdog: ReturnType<typeof setInterval> | undefined;
     let startupTimer: ReturnType<typeof setTimeout> | undefined;
+    let noAgentTimer: ReturnType<typeof setTimeout> | undefined;
 
     const write = (frame: CachedFrame): void => {
       if (closed || res.writableEnded) return;
@@ -141,6 +176,7 @@ export async function streamMjpeg(req: import("express").Request, res: import("e
       if (started || closed) return;
       started = true;
       if (startupTimer) clearTimeout(startupTimer);
+      if (noAgentTimer) clearTimeout(noAgentTimer);
       res.writeHead(200, {
         "Content-Type": `multipart/x-mixed-replace; boundary=${BOUNDARY}`,
         "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
@@ -173,21 +209,40 @@ export async function streamMjpeg(req: import("express").Request, res: import("e
       if (closed) return;
       closed = true;
       if (startupTimer) clearTimeout(startupTimer);
+      if (noAgentTimer) clearTimeout(noAgentTimer);
       if (watchdog) clearInterval(watchdog);
       off();
       gateway.release(id);
+    };
+
+    /** Rinde la conexión sin imagen: 503 con motivo, nunca una respuesta muda. */
+    const failNoSignal = (reason: "sin-agent" | "sin-signal", error: string): void => {
+      if (started || closed) return;
+      cleanup();
+      if (!res.headersSent) res.status(503).json({ error, reason });
     };
 
     // Sin imagen fresca se espera al primer frame (arranque del agent). Si no
     // llega, se contesta 503: la conexión muda era peor que un error, el
     // cliente se quedaba mirando una pantalla que nunca se pintaría.
     startupTimer = setTimeout(() => {
-      if (started || closed) return;
-      cleanup();
-      if (!res.headersSent) {
-        res.status(503).json({ error: "Sin frames recientes: el agent no está conectado", reason: "sin-agent" });
-      }
+      const agents = gatewayStats()?.agents;
+      const anyAgent = typeof agents === "number" && agents > 0;
+      failNoSignal(
+        anyAgent ? "sin-signal" : "sin-agent",
+        anyAgent
+          ? "Sin frames recientes: el agent está conectado pero no envía vídeo"
+          : "Sin frames recientes: el agent no está conectado",
+      );
     }, STARTUP_MS);
+
+    // Si no hay NADIE en la sala de agents, no va a llegar ningún frame: se
+    // contesta antes para que un proxy intermedio pueda reenviar el motivo.
+    noAgentTimer = setTimeout(() => {
+      if (gatewayStats()?.agents === 0) {
+        failNoSignal("sin-agent", "Sin agent conectado: nadie puede enviar vídeo de esta cámara");
+      }
+    }, NO_AGENT_MS);
 
     // Primer pintado inmediato con lo que haya en caché (no hay que esperar al
     // siguiente frame del agent, que puede tardar mientras FFmpeg arranca).

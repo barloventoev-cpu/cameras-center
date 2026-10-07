@@ -5,12 +5,20 @@
  * Levanta el server compilado en un puerto aislado (almacén en memoria, sin
  * Supabase ni Cloudinary), simula un agent que manda UN frame y comprueba:
  *
- *   1. con frame fresco: el MJPEG sí sirve y el viewer SÍ recibe la "puesta al día";
+ *   1. con frame fresco: el MJPEG sí sirve, el viewer SÍ recibe la "puesta al
+ *      día" y `frame.jpg` devuelve la foto;
  *   2. con el frame viejo (>15 s, agent apagado):
  *        - el MJPEG NO reenvía la foto caducada;
  *        - el viewer NO recibe nada al suscribirse (antes llegaba y la UI
  *          pintaba la imagen fantasma con la pastilla «En vivo»);
- *   3. al volver a llegar frames en vivo, todo vuelve a funcionar.
+ *        - `frame.jpg` TAMPOCO la sirve (404 + X-Frame-Age-Ms): es lo que
+ *          consumía TuQuotaAdmin y que seguía pintando la foto de hace minutos;
+ *        - el health expone la antigüedad de cada frame;
+ *   3. al volver a llegar frames en vivo, todo vuelve a funcionar;
+ *   4. con el agent desconectado, el MJPEG contesta 503 rápido (sin llegar
+ *      al timeout largo), para que un proxy intermedio pueda reenviarlo.
+ *
+ * `FRAME_MAX_AGE_MS` baja a 15 s aquí para no tener que esperar 60 s al test.
  */
 import { spawn } from "node:child_process";
 import { io } from "socket.io-client";
@@ -20,6 +28,7 @@ const PORT = 4399;
 const BASE = `http://localhost:${PORT}`;
 const JWT_SECRET = "aa".repeat(32); // 64 hex → 32 bytes
 const FRESH_MS = 15_000;
+const FRAME_MAX_AGE_MS = 15_000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const results = [];
@@ -135,6 +144,7 @@ const child = spawn(process.execPath, ["apps/server/dist/index.js"], {
     RETENTION_ENABLED: "false",
     RATE_LIMIT_RPM: "1000",
     AUTH_RATE_LIMIT_RPM: "1000",
+    FRAME_MAX_AGE_MS: String(FRAME_MAX_AGE_MS),
   },
   stdio: ["ignore", "pipe", "pipe"],
 });
@@ -186,6 +196,14 @@ try {
     `viewer suscrito recibe la puesta al día (seq=${freshViewer.map((h) => h.seq).join(",") || "ninguno"})`,
   );
 
+  const freshFrame = await fetch(`${BASE}/api/v1/cameras/${cameraId}/frame.jpg`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  check(
+    freshFrame.status === 200 && freshFrame.headers.get("content-type")?.includes("image/jpeg"),
+    `frame.jpg con frame fresco sirve la foto (${freshFrame.status})`,
+  );
+
   // --- 2. el agent "se apaga": el frame envejece ----------------------------
   console.log(`   … esperando ${FRESH_MS / 1000} s a que el frame caduce`);
   await sleep(FRESH_MS + 1000);
@@ -203,6 +221,24 @@ try {
   const staleViewer = await watchFrames(4000);
   check(staleViewer.length === 0, `viewer suscrito NO recibe la imagen fantasma (${staleViewer.length} frames)`);
 
+  // La foto vieja tampoco se sirve por REST: era la que seguían pintando los
+  // integradores (TuQuotaAdmin) con el agent apagado.
+  const staleFrame = await fetch(`${BASE}/api/v1/cameras/${cameraId}/frame.jpg`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  const staleAge = Number(staleFrame.headers.get("x-frame-age-ms"));
+  check(
+    staleFrame.status === 404 && !staleFrame.headers.get("content-type")?.includes("image/jpeg"),
+    `frame.jpg con foto caducada contesta 404 y NO devuelve JPEG (status=${staleFrame.status}, age=${staleAge} ms)`,
+  );
+
+  const staleHealth = await fetch(`${BASE}/api/health`).then((r) => r.json());
+  const aged = (staleHealth.frames?.cameras ?? []).find((c) => c.cameraId === cameraId);
+  check(
+    Boolean(aged) && aged.ageMs > FRESH_MS,
+    `health expone la antigüedad del frame por cámara (ageMs=${aged?.ageMs ?? "?"})`,
+  );
+
   // --- 3. vuelve la señal en vivo ------------------------------------------
   pushFrame(agent, 2);
   await sleep(300);
@@ -212,7 +248,24 @@ try {
   const backMjpeg = await readMjpeg(4000);
   check(backMjpeg.bytes > 0, `al volver los frames, el MJPEG sirve imagen (${backMjpeg.bytes} B)`);
 
+  // --- 4. el agent se desconecta del todo: 503 pronto y sin foto vieja -----
   agent.close();
+  console.log(`   … esperando ${FRESH_MS / 1000} s a que caduque el último frame sin agent`);
+  await sleep(FRESH_MS + 1000);
+
+  const noAgentMjpeg = await readMjpeg(15_000);
+  check(
+    noAgentMjpeg.status === 503 && noAgentMjpeg.ms < 12_000,
+    `MJPEG sin agent conectado contesta 503 en ${noAgentMjpeg.ms} ms (< 12 s, antes se esperaba 20 s) status=${noAgentMjpeg.status}`,
+  );
+
+  const noAgentFrame = await fetch(`${BASE}/api/v1/cameras/${cameraId}/frame.jpg`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  check(
+    noAgentFrame.status === 404,
+    `frame.jpg sin agent ya no devuelve la foto vieja (status=${noAgentFrame.status}, age=${noAgentFrame.headers.get("x-frame-age-ms")} ms)`,
+  );
 } catch (error) {
   check(false, `ejecución: ${error instanceof Error ? error.message : error}`);
   console.error("\n--- log del server ---\n" + serverLog.slice(-4000));
