@@ -20,3 +20,8 @@ thumbs/
 
 # Capturas de pantalla de las pruebas de interfaz (npm run test:ui)
 artifacts/
+
+# Imagen de origen de los favicons (apps/web/generate-favicon.js) y sus copias:
+# archivos locales, no se versionan
+apps/web/src/webcam_*.png
+apps/web/public/webcam_*.png

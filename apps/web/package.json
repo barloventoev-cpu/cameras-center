@@ -15,6 +15,7 @@
     "@cameras/ui": "*",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "sharp": "^0.35.5",
     "socket.io-client": "^4.8.1"
   },
   "devDependencies": {
