@@ -1,4 +1,4 @@
-import type { CameraSourceType } from "@cameras/protocol";
+import { ENCODING_MAX_WIDTH, ENCODING_MIN_WIDTH, type CameraSourceType } from "@cameras/protocol";
 import { webcamEndpoint } from "../local/webcam";
 
 export interface SourceSpec {
@@ -15,14 +15,17 @@ export interface SourceSpec {
 /** Codificación por defecto: 640 px de ancho y 2 fps como máximo. */
 export const DEFAULT_ENCODING = { width: 640, fps: 2 } as const;
 
-/** Sanea un encoding parcial (del store local o del server): recorta a rango. */
+/**
+ * Sanea un encoding parcial (del store local o del server): recorta al rango
+ * `ENCODING_MIN_WIDTH`–`ENCODING_MAX_WIDTH` (ancho par) y a los fps válidos.
+ */
 export function sanitizeEncoding(input: { width?: unknown; fps?: unknown }): {
   width: number;
   fps: number;
 } {
   const w = typeof input.width === "number" && Number.isFinite(input.width) ? Math.round(input.width) : DEFAULT_ENCODING.width;
   const f = typeof input.fps === "number" && Number.isFinite(input.fps) ? input.fps : DEFAULT_ENCODING.fps;
-  const width = Math.min(640, Math.max(160, w % 2 === 0 ? w : w - 1));
+  const width = Math.min(ENCODING_MAX_WIDTH, Math.max(ENCODING_MIN_WIDTH, w % 2 === 0 ? w : w - 1));
   const fps = [0.5, 1, 1.5, 2].includes(f) ? (f as 0.5 | 1 | 1.5 | 2) : DEFAULT_ENCODING.fps;
   return { width, fps };
 }

@@ -66,11 +66,18 @@ export class MjpegPipeline {
   }
 
   updateSpec(spec: SourceSpec) {
+    // Los defaults (640 px @ 2 fps) viven en sanitizeEncoding y no en el spec:
+    // comparando con `??`, una cámara sin resolución guardada y otra con 160 px
+    // daban lo mismo, no se reiniciaba FFmpeg y el vídeo seguía saliendo a
+    // 640x360 aunque reportStatus() ya informaba 160. Se normaliza antes de
+    // comparar para que el reinicio dependa de lo que realmente va a salir.
+    const prev = sanitizeEncoding(this.spec);
+    const next = sanitizeEncoding(spec);
     const changed =
       spec.connection !== this.spec.connection ||
       spec.sourceType !== this.spec.sourceType ||
-      (spec.width ?? this.spec.width) !== (this.spec.width ?? spec.width) ||
-      (spec.fps ?? this.spec.fps) !== (this.spec.fps ?? spec.fps);
+      prev.width !== next.width ||
+      prev.fps !== next.fps;
     this.spec = spec;
     if (changed && (this.state === "running" || this.state === "starting")) {
       // Reiniciar para aplicar la nueva URL o codificación (el FFmpeg en

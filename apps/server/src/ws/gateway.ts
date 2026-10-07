@@ -68,7 +68,9 @@ export interface Gateway {
    */
   requestEncoding(cameraId: string, width: number, fps: number): boolean;
   /** Última codificación reportada por el agent (para GET /encoding). */
-  lastEncoding(cameraId: string): { width: number; fps: number } | undefined;
+  lastEncoding(
+    cameraId: string
+  ): { width: number; fps: number; measuredFps?: number } | undefined;
   /**
    * F8: pide al agent que busque cámaras en su red y espera su respuesta.
    * Devuelve `sin-agent` si no hay nadie escuchando y `timeout` si no contesta.
@@ -83,7 +85,10 @@ const AGENT_ROOM = "agents";
 const cameraRoom = (cameraId: string) => `cam:${cameraId}`;
 
 /** Última codificación (resolución/FPS) reportada por el agent por cámara. */
-const lastEncodings = new Map<string, { width: number; fps: number }>();
+const lastEncodings = new Map<
+  string,
+  { width: number; fps: number; measuredFps?: number }
+>();
 
 /** Último uso de disco reportado por el agent (panel de almacenamiento). */
 export const agentDisk = {
@@ -243,7 +248,12 @@ export function createGateway(httpServer: HttpServer): Gateway {
         io.to(cameraRoom(payload.report.cameraId)).emit(CHANNELS.agentStatus, payload);
         const enc = payload.report.encoding;
         if (enc && Number.isFinite(enc.width) && Number.isFinite(enc.fps)) {
-          lastEncodings.set(payload.report.cameraId, { width: enc.width, fps: enc.fps });
+          const measured = payload.report.fps;
+          lastEncodings.set(payload.report.cameraId, {
+            width: enc.width,
+            fps: enc.fps,
+            ...(Number.isFinite(measured) ? { measuredFps: measured } : {}),
+          });
         }
       }
     });

@@ -164,11 +164,23 @@ export type RecordClip = z.infer<typeof RecordClipSchema>;
 /**
  * Codificación por cámara (resolución/FPS elegidos por el administrador).
  * Ancho = tope en px (el alto se ajusta al aspecto); fps con tope de 2.
+ *
+ * El mínimo y el máximo los comparten el server (validación HTTP), el agent
+ * (saneado del store local) y el panel de TuQuotaAdmin, para que las
+ * resoluciones ofrecidas en el formulario sean las que de verdad se aceptan.
  */
+export const ENCODING_MIN_WIDTH = 64;
+export const ENCODING_MAX_WIDTH = 640;
+
 export const EncodingSchema = z.object({
-  width: z.number().int().min(160).max(640).refine((n) => n % 2 === 0, {
-    message: "ancho par entre 160 y 640",
-  }),
+  width: z
+    .number()
+    .int()
+    .min(ENCODING_MIN_WIDTH)
+    .max(ENCODING_MAX_WIDTH)
+    .refine((n) => n % 2 === 0, {
+      message: `ancho par entre ${ENCODING_MIN_WIDTH} y ${ENCODING_MAX_WIDTH}`,
+    }),
   fps: z.union([z.literal(0.5), z.literal(1), z.literal(1.5), z.literal(2)]),
 });
 export type CameraEncoding = z.infer<typeof EncodingSchema>;

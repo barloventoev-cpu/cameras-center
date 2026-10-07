@@ -88,6 +88,20 @@ class FrameCache {
   }
 
   /**
+   * Último frame emitido: tamaño real en px y edad. `GET /encoding` lo usa para
+   * contrastar lo configurado con lo que de verdad sale del agent: si el FFmpeg
+   * en marcha no llegó a reiniciar, el tamaño no cambia aunque el reporte de
+   * estado diga lo contrario.
+   */
+  emitted(cameraId: string): { width: number; height: number; ageMs: number } | null {
+    const frame = this.frames.get(cameraId);
+    if (!frame) return null;
+    const size = jpegSize(frame.data);
+    if (!size) return null;
+    return { ...size, ageMs: Date.now() - frame.receivedAt };
+  }
+
+  /**
    * Antigüedad de todos los frames cacheados: la expone el health para que una
    * integración sepa si cada cámara tiene señal real o es una foto vieja.
    */
@@ -105,3 +119,40 @@ class FrameCache {
 }
 
 export const frameCache = new FrameCache();
+
+/**
+ * Dimensiones (px) de un JPEG leyendo su cabecera SOF; null si no se puede.
+ * Es la resolución REAL del fotograma, independientemente de lo configurado.
+ */
+export function jpegSize(data: Buffer): { width: number; height: number } | null {
+  if (data.length < 4 || data[0] !== 0xff || data[1] !== 0xd8) return null;
+  let i = 2;
+  while (i + 1 < data.length) {
+    if (data[i] !== 0xff) {
+      i += 1;
+      continue;
+    }
+    const marker = data[i + 1];
+    if (marker === undefined || i + 4 > data.length) return null;
+    // SOI/EOI/RSTn/TEM: marcos sin longitud que saltar.
+    if (
+      marker === 0xd8 ||
+      marker === 0xd9 ||
+      marker === 0x01 ||
+      marker === 0xff ||
+      (marker >= 0xd0 && marker <= 0xd7)
+    ) {
+      i += 2;
+      continue;
+    }
+    const len = data.readUInt16BE(i + 2);
+    if (len < 2) return null;
+    // SOF0..SOF15 salvo DHT (C4), JPG (C8) y DAC (CC): llevan las dimensiones.
+    if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+      if (i + 9 > data.length) return null;
+      return { height: data.readUInt16BE(i + 5), width: data.readUInt16BE(i + 7) };
+    }
+    i += 2 + len;
+  }
+  return null;
+}

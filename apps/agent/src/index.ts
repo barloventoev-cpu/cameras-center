@@ -106,6 +106,11 @@ async function main() {
       onSetEncoding: (cameraId, width, fps) => {
         const ok = registry.setEncoding(cameraId, { width, fps });
         console.log(`[agent] setEncoding ${cameraId}: ${ok ? "aplicado" : "cámara desconocida"}`);
+        // Reporte inmediato: el panel relee la codificación justo después de
+        // guardar y así no tiene que esperar al tick de 10 s para ver lo
+        // aplicado (y los fps realmente medidos tras el reinicio).
+        const pipeline = ok ? registry.get(cameraId) : undefined;
+        if (pipeline) transportRef.current?.emitStatus(pipeline.reportStatus());
       },
       // F8: búsqueda de cámaras en la red local pedida desde la web.
       // SIEMPRE se contesta: sin respuesta el server mantendría la petición

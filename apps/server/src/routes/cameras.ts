@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { CreateCameraSchema } from "@cameras/protocol";
+import { CreateCameraSchema, EncodingSchema } from "@cameras/protocol";
 import { store, toPublicCamera } from "../store";
 import { requireAuth, requirePrincipal } from "../middleware/auth";
 import { principalRateLimit } from "../middleware/rateLimit";
@@ -347,16 +347,13 @@ camerasRouter.post("/:id/clip", requireAuth, async (req, res) => {
 });
 
 /** Codificación por cámara (resolución/FPS del panel del admin). */
-const EncodingRequestSchema = z.object({
-  width: z.number().int().min(160).max(640).refine((n) => n % 2 === 0, {
-    message: "ancho par entre 160 y 640",
-  }),
-  fps: z.union([z.literal(0.5), z.literal(1), z.literal(1.5), z.literal(2)]),
-});
+const EncodingRequestSchema = EncodingSchema;
 
 type EncodingGateway = {
   requestEncoding(cameraId: string, width: number, fps: number): boolean;
-  lastEncoding(cameraId: string): { width: number; fps: number } | undefined;
+  lastEncoding(
+    cameraId: string
+  ): { width: number; fps: number; measuredFps?: number } | undefined;
   stats(): { agents: number };
 };
 
@@ -376,10 +373,27 @@ camerasRouter.get("/:id/encoding", requirePrincipal, principalRateLimit, async (
     const reported = gateway?.lastEncoding(id);
     const width = reported?.width ?? 640;
     const fps = reported?.fps ?? 2;
+    const emitted = frameCache.emitted(id);
     res.json({
       cameraId: id,
       width,
       fps,
+      /**
+       * Fotogramas por segundo realmente medidos en el stream. Si no se
+       * acercan a `fps`, el FFmpeg en marcha no está emitiendo lo configurado
+       * (p. ej. sigue con la codificación anterior hasta su próximo reinicio):
+       * el panel lo muestra para que la configuración no pueda "parecer"
+       * aplicada sin serlo.
+       */
+      measuredFps: reported?.measuredFps ?? null,
+      /**
+       * Resolución REAL del último fotograma cacheado (y su edad). El filtro
+       * escala a `min(width, ancho de la fuente)`, así que un ancho MAYOR que
+       * el configurado significa sin lugar a dudas que el FFmpeg en marcha no
+       * aplicó la codificación.
+       */
+      emittedSize: emitted ? `${emitted.width}x${emitted.height}` : null,
+      emittedAgeMs: emitted?.ageMs ?? null,
       agentConnected: (gateway?.stats()?.agents ?? 0) > 0,
       custom: width !== 640 || fps !== 2,
     });

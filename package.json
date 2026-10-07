@@ -29,6 +29,7 @@
     "test:f6": "node tools/f6-test.mjs",
     "test:f7": "tsx tools/f7-test.ts",
     "test:ghost": "node tools/ghost-test.mjs",
+    "test:encoding": "tsx tools/encoding-selftest.ts",
     "test:webcam": "tsx tools/webcam-selftest.ts",
     "test:ui": "node tools/ui-test.mjs",
     "build": "npm run build --workspaces --if-present",
