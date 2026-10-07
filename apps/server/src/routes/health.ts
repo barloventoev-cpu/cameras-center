@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { API } from "@cameras/protocol";
 import { config, hasSupabase } from "../config";
-import { store } from "../store";
+import { store, decryptIssues } from "../store";
 import { authInfo } from "../db/users";
 import { getSchemaStatus } from "../db/supabase";
 import { cloudinaryStatus, thumbCount, thumbStats } from "../thumbs";
@@ -40,6 +40,9 @@ healthRouter.get(API.health, async (req, res) => {
               ? "ok"
               : "sin verificar")
         : "n/a (memoria)",
+      // Cámaras que no aparecen en la UI porque su fila está cifrada con otra
+      // CAMERA_ENC_KEY (p.ej. creadas desde otro entorno): la UI lo avisa.
+      skippedDecrypt: decryptIssues,
     },
     auth: authInfo(),
     // F3: conexiones WebSocket vivas

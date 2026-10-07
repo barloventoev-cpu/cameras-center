@@ -93,6 +93,13 @@ export const agentDisk = {
   at: 0,
 };
 
+/**
+ * Edad máxima (ms) del frame de "puesta al día" que se manda al suscribirse.
+ * Más viejo que esto (p. ej. el agent apagado hace horas) NO se envía: el
+ * cliente lo pintaría como si estuviera en vivo (imagen fantasma).
+ */
+const CATCHUP_MAX_AGE_MS = 15_000;
+
 /** Frames enviados a un espectador que aún no ha confirmado (antimancha). */
 const MAX_INFLIGHT = 4;
 /** Si un espectador no confirma en este tiempo, se le vuelve a permitir. */
@@ -364,10 +371,14 @@ export function createGateway(httpServer: HttpServer): Gateway {
         socket.data.subscriptions = [...new Set([...(socket.data.subscriptions ?? []), cameraId])];
 
         if (wasEmpty) requestStream(cameraId, "remote");
-        // devolver el último frame cacheado para que no haya pantalla negra.
+        // Devolver el último frame cacheado para que no haya pantalla negra.
         // seq=-1 marca que es una imagen de "puesta al día" y no un frame en vivo.
+        // Sólo si es RECIENTE: un frame viejo (agent apagado, sin espectadores
+        // hace rato) sería una imagen fantasma que la UI enseñaría como "En vivo".
         const cached = frameCache.get(cameraId);
-        if (cached) socket.emit(CHANNELS.streamFrame, { ...cached.header, seq: -1 }, cached.data);
+        if (cached && Date.now() - cached.receivedAt <= CATCHUP_MAX_AGE_MS) {
+          socket.emit(CHANNELS.streamFrame, { ...cached.header, seq: -1 }, cached.data);
+        }
         ack?.({ ok: true });
       },
     );

@@ -86,7 +86,12 @@ export interface HealthResponse {
   env: string;
   time: string;
   uptimeSec: number;
-  storage?: { cameras: string; supabase: string };
+  storage?: {
+    cameras: string;
+    supabase: string;
+    /** Cámaras omitidas en el listado por CAMERA_ENC_KEY distinta entre entornos. */
+    skippedDecrypt?: Array<{ id: string; name: string }>;
+  };
   /** F3: conexiones WS vivas */
   ws?: {
     connected: number;

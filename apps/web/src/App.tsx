@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
-import { CreateCameraSchema, type Camera, type CreateCameraInput } from "@cameras/protocol";
+import { CreateCameraSchema, type Camera, type CameraStatus, type CreateCameraInput } from "@cameras/protocol";
 import { CameraGrid } from "@cameras/ui";
 import { api, getToken, getUser, setToken, setUser, type HealthResponse, type StorageInfo } from "./api";
 import { AuthScreen } from "./AuthScreen";
@@ -49,13 +49,41 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [cameras, live, sourceModes],
   );
-  const relayUrls = useRelayFrames(relayIds);
+  const relayFrames = useRelayFrames(relayIds);
 
   const streamUrls: Record<string, string | undefined> = {};
   if (live) {
     for (const camera of cameras) {
       streamUrls[camera.id] =
-        sourceOf(camera.id) === "relay" ? relayUrls[camera.id] : `${agentUrl}/stream/${camera.id}.mjpg`;
+        sourceOf(camera.id) === "relay" ? relayFrames[camera.id]?.url : `${agentUrl}/stream/${camera.id}.mjpg`;
+    }
+  }
+
+  /**
+   * Pastilla de estado de cada tarjeta. No basta con "la imagen cargó": eso
+   * dejaba una imagen fantasma con «En vivo» cuando el agent estaba apagado.
+   * Se combina con dos señales duras:
+   *  - `agents = 0` en /api/health => no puede haber vídeo de ninguna cámara;
+   *  - frames parados en el relay => la señal se cortó a mitad de visionado.
+   */
+  const statuses: Record<string, CameraStatus> = {};
+  if (live && health) {
+    const agents = health.ws?.agents ?? 0;
+    for (const camera of cameras) {
+      if (agents === 0) {
+        statuses[camera.id] = "offline"; // sin agent no hay quien mande frames
+        continue;
+      }
+      if (sourceOf(camera.id) !== "relay") continue;
+      const frame = relayFrames[camera.id];
+      // suscrito al relay pero sin imagen todavía: el agent está arrancando
+      statuses[camera.id] = !frame
+        ? "starting"
+        : frame.live
+          ? "online"
+          : frame.lastLiveAt === null
+            ? "starting"
+            : "offline";
     }
   }
 
@@ -260,6 +288,14 @@ export function App() {
                 ? `server v${health.version} · ${health.storage?.cameras ?? "?"} · uptime ${health.uptimeSec}s`
                 : "conectando…"}
           </div>
+          {health && (health.ws?.agents ?? 0) === 0 && (
+            <div
+              className="server-pill error"
+              title="El agent no está conectado al server: no puede haber vídeo en vivo"
+            >
+              ⚠ agent desconectado
+            </div>
+          )}
           <button className="ghost" type="button" onClick={logout}>
             Salir
           </button>
@@ -353,6 +389,7 @@ export function App() {
 
       <CameraGrid
         cameras={cameras}
+        statuses={statuses}
         streamUrls={streamUrls}
         thumbnails={thumbnails}
         encodingFps={encodings}
@@ -433,6 +470,14 @@ export function App() {
           <strong>Almacenamiento de cámaras:</strong> {health?.storage?.cameras ?? "…"} ·{" "}
           <strong>Supabase:</strong> {health?.storage?.supabase ?? "…"}
         </p>
+        {(health?.storage?.skippedDecrypt?.length ?? 0) > 0 && (
+          <p style={{ color: "#ff8a8a" }}>
+            ⚠️ <strong>{health?.storage?.skippedDecrypt?.length} cámara(s) no aparecen</strong> porque su URL está
+            cifrada con otra <code>CAMERA_ENC_KEY</code>:{" "}
+            {health?.storage?.skippedDecrypt?.map((c) => `${c.name} (${c.id.slice(0, 8)}…)`).join(", ")}. Usa la misma
+            clave en Render y en el entorno donde se creó la cámara.
+          </p>
+        )}
         <p>
           <strong>Cloudinary:</strong> {health?.cloudinary ? `${health.cloudinary.status} · ${health.cloudinary.thumbnails} miniaturas · ${health.cloudinary.uploads} subidas` : "…"} ·{" "}
           <strong>Conexiones:</strong>{" "}

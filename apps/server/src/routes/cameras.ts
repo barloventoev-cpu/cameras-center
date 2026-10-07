@@ -104,19 +104,20 @@ export async function streamMjpeg(req: import("express").Request, res: import("e
     const BOUNDARY = "frame";
     /** Sin frame nuevo en este tiempo se cierra (el cliente puede reconectar). */
     const STALL_MS = 60_000;
-    /** Si no llega nada, se reenvía la última foto para mantener viva la conexión. */
+    /** Si no llega nada, se reenvía la última foto fresca para mantener viva la conexión. */
     const KEEPALIVE_MS = 10_000;
-
-    res.writeHead(200, {
-      "Content-Type": `multipart/x-mixed-replace; boundary=${BOUNDARY}`,
-      "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-      Connection: "keep-alive",
-      "X-Accel-Buffering": "no",
-    });
+    /** Un frame con más edad que esto NO se pinta: sería una imagen fantasma. */
+    const FRESH_MS = 15_000;
+    /** Espera al primer frame antes de contestar (el agent arranca FFmpeg en ~2-5 s). */
+    const STARTUP_MS = 20_000;
 
     let closed = false;
+    /** ¿Ya se enviaron las cabeceras multipart? writeHead sólo no llega al cliente. */
+    let started = false;
     let lastFrameAt = Date.now();
     let lastWriteAt = Date.now();
+    let watchdog: ReturnType<typeof setInterval> | undefined;
+    let startupTimer: ReturnType<typeof setTimeout> | undefined;
 
     const write = (frame: CachedFrame): void => {
       if (closed || res.writableEnded) return;
@@ -131,15 +132,38 @@ export async function streamMjpeg(req: import("express").Request, res: import("e
       lastWriteAt = Date.now();
     };
 
-    // primer pintado inmediato con lo que haya en caché (no hay que esperar al
-    // siguiente frame del agent, que puede tardar mientras FFmpeg arranca).
-    const initial = frameCache.get(id);
-    if (initial) {
-      write(initial);
-      lastFrameAt = lastWriteAt;
-    }
+    /**
+     * Abre el stream multipart. Las cabeceras NO se envían hasta que hay
+     * imagen real que pintar: un `writeHead()` sin `write()` no sale del
+     * servidor y el cliente se quedaría esperando para siempre.
+     */
+    const start = (): void => {
+      if (started || closed) return;
+      started = true;
+      if (startupTimer) clearTimeout(startupTimer);
+      res.writeHead(200, {
+        "Content-Type": `multipart/x-mixed-replace; boundary=${BOUNDARY}`,
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
+      });
+      lastWriteAt = Date.now();
+      watchdog = setInterval(() => {
+        const now = Date.now();
+        if (now - lastFrameAt > STALL_MS) {
+          cleanup();
+          if (!res.writableEnded) res.end();
+          return;
+        }
+        if (now - lastWriteAt > KEEPALIVE_MS) {
+          const cached = frameCache.get(id);
+          if (cached && Date.now() - cached.receivedAt <= FRESH_MS) write(cached);
+        }
+      }, 5_000);
+    };
 
     const off = frameCache.on(id, (frame) => {
+      start();
       lastFrameAt = Date.now();
       write(frame);
     });
@@ -148,23 +172,33 @@ export async function streamMjpeg(req: import("express").Request, res: import("e
     const cleanup = (): void => {
       if (closed) return;
       closed = true;
-      clearInterval(watchdog);
+      if (startupTimer) clearTimeout(startupTimer);
+      if (watchdog) clearInterval(watchdog);
       off();
       gateway.release(id);
     };
 
-    const watchdog = setInterval(() => {
-      const now = Date.now();
-      if (now - lastFrameAt > STALL_MS) {
-        cleanup();
-        if (!res.writableEnded) res.end();
-        return;
+    // Sin imagen fresca se espera al primer frame (arranque del agent). Si no
+    // llega, se contesta 503: la conexión muda era peor que un error, el
+    // cliente se quedaba mirando una pantalla que nunca se pintaría.
+    startupTimer = setTimeout(() => {
+      if (started || closed) return;
+      cleanup();
+      if (!res.headersSent) {
+        res.status(503).json({ error: "Sin frames recientes: el agent no está conectado", reason: "sin-agent" });
       }
-      if (now - lastWriteAt > KEEPALIVE_MS) {
-        const cached = frameCache.get(id);
-        if (cached) write(cached);
-      }
-    }, 5_000);
+    }, STARTUP_MS);
+
+    // Primer pintado inmediato con lo que haya en caché (no hay que esperar al
+    // siguiente frame del agent, que puede tardar mientras FFmpeg arranca).
+    // Sólo si el frame es fresco: una foto vieja (agent apagado) engañaría al
+    // cliente mostrando vídeo donde ya no lo hay.
+    const initial = frameCache.get(id);
+    if (initial && Date.now() - initial.receivedAt <= FRESH_MS) {
+      start();
+      write(initial);
+      lastFrameAt = initial.receivedAt;
+    }
 
     req.on("close", cleanup);
     res.on("close", cleanup);

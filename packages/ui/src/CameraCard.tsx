@@ -59,15 +59,19 @@ export function CameraCard({
   };
 
   const poster = streamUrl && imageOk ? streamUrl : thumbnailUrl;
-  // Estado intuitivo derivado de lo que se VE (no del reporte del agent, que
-  // esta UI no recibe): en pausa / sin señal / conectando / en vivo.
-  const effectiveStatus: CameraStatus = !streamUrl
+  // Estado intuitivo derivado de lo que se VE: en pausa / sin señal / conectando / en vivo.
+  const visualStatus: CameraStatus = !streamUrl
     ? "paused"
     : !imageOk
       ? "offline"
       : !loaded
         ? "starting"
         : "online";
+  // Si el padre manda un estado explícito (sin agent conectado, frames
+  // detenidos…) manda él: "la imagen cargó" no demuestra que haya vídeo en
+  // vivo, y esa idea dejaba una imagen fantasma con la pastilla «En vivo».
+  const effectiveStatus: CameraStatus = status !== "unknown" ? status : visualStatus;
+  const frozenImage = effectiveStatus === "offline" && loaded;
 
   const metaParts: string[] = [];
   if (frameSize) metaParts.push(frameSize);
@@ -147,6 +151,24 @@ export function CameraCard({
         >
           {isFullscreen ? "⛶ Salir" : "⛶ Ampliar"}
         </button>
+
+        {frozenImage && (
+          <div
+            style={{
+              position: "absolute",
+              left: 8,
+              bottom: 8,
+              background: "rgba(0,0,0,.7)",
+              color: "#ff8a8a",
+              fontSize: 10,
+              fontWeight: 600,
+              padding: "2px 8px",
+              borderRadius: 999,
+            }}
+          >
+            ⏹ sin señal · última imagen
+          </div>
+        )}
 
         {loaded && metaText !== "" && (
           <div

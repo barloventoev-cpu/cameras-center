@@ -2,7 +2,15 @@ import { io, type Socket } from "socket.io-client";
 import { CHANNELS, type FrameHeader } from "@cameras/protocol";
 import { getToken } from "./api";
 
-type FrameListener = (blob: Blob) => void;
+type FrameListener = (blob: Blob, meta: FrameMeta) => void;
+
+/** Datos de un frame recibido, para que el cliente sepa si está en vivo. */
+export interface FrameMeta {
+  /** `seq = -1` => imagen de "puesta al día" (caché del server), no un frame en vivo. */
+  seq: number;
+  /** Instante local de recepción (`Date.now()`). */
+  at: number;
+}
 
 const SERVER_URL = (import.meta.env.VITE_SERVER_URL as string | undefined) ?? "http://localhost:4000";
 
@@ -40,9 +48,10 @@ function ensureSocket(): Socket {
         // TS 5.7 tipa `Uint8Array<ArrayBufferLike>` y `BlobPart` exige `ArrayBuffer`:
         // en runtime aquí siempre llega un ArrayBuffer normal del socket.
         const blob = new Blob([bytes as unknown as BlobPart], { type: "image/jpeg" });
+        const meta: FrameMeta = { seq: Number(header?.seq ?? 0), at: Date.now() };
         for (const listener of set) {
           try {
-            listener(blob);
+            listener(blob, meta);
           } catch {
             // un suscriptor roto no debe tumbar el resto
           }

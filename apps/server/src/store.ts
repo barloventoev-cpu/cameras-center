@@ -61,6 +61,13 @@ export function revealConnection(value: string | null | undefined): string {
 // ---------------------------------------------------------------------------
 const memoryMap = new Map<string, StoredCamera>();
 
+/**
+ * Cámaras que el último `list()` ha tenido que omitir por no poder descifrarse
+ * (CAMERA_ENC_KEY distinta entre entornos). El health lo expone para que la UI
+ * avise: si no, la cámara simplemente "desaparece" del listado sin más.
+ */
+export const decryptIssues: Array<{ id: string; name: string }> = [];
+
 export const memoryStore: CameraStore = {
   backend: "memory",
   ready: () => true,
@@ -137,6 +144,7 @@ export const supabaseStore: CameraStore = {
       .order("name", { ascending: true });
     if (error) throw new Error(`Supabase list: ${error.message}`);
     const out: StoredCamera[] = [];
+    decryptIssues.length = 0;
     for (const row of (data ?? []) as CameraRow[]) {
       try {
         out.push(rowToCamera(row));
@@ -144,6 +152,7 @@ export const supabaseStore: CameraStore = {
         // Una fila cifrada con otra CAMERA_ENC_KEY (p.ej. dos servidores con
         // claves distintas compartiendo Supabase) no debe tumbar todo el
         // listado: se omite y se avisa en el log para alinear las claves.
+        decryptIssues.push({ id: row.id, name: row.name });
         console.error(
           `[cameras] omitiendo ${row.id} (${row.name}): no se pudo descifrar (¿CAMERA_ENC_KEY distinta?):`,
           err instanceof Error ? err.message : err,
